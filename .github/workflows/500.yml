@@ -141,14 +141,6 @@ jobs:
               sed -i 's/$(error KSU requires Kprobes; enable it (defconfig))/# $(error KSU requires Kprobes; enable it (defconfig))/' drivers/kernelsu/Kbuild
             fi
             echo "✅ Kprobes setup selesai"
-
-          # ---------------------------------------------------------
-          # 4. VANILA
-          # ---------------------------------------------------------
-          elif [ "$VARIANT" = "vanila" ]; then
-            clean_ksu
-            echo "[Vanila] Skipping KSU setup. Building clean kernel."
-          fi
           
       # --- APPLY ALL CRITICAL FIXES ---
       - name: Apply Critical Fixes
