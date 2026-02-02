@@ -1,0 +1,327 @@
+name: MULTIMANAGER Kernel Builder (Matrix)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Nama Kernel (Contoh: Zixine-Elysium)'
+        required: true
+        default: 'Zixine-Elysium-inline-1.5'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-kernel:
+    name: Build ${{ matrix.variant }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [MULTIMANAGER, vanilla]
+
+    steps:
+      # --- LANGKAH 1: PEMBERSIHAN DISK PALING AGRESIF ---
+      - name: Extreme Disk Cleanup
+        run: |
+          echo "🧹 Membersihkan sampah runner agar tidak Error 28..."
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          df -h
+
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 2048
+          swap-size-mb: 8192
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Fetch Source Code
+        uses: actions/checkout@v4
+
+      - name: Initialize Git Identity
+        run: |
+          git config --global user.name "zixine"
+          git config --global user.email "waheid005@gmail.com"
+
+      - name: Dependency Installation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl repo build-essential bc bison flex libssl-dev \
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+      # --- INIT & SYNC (OPTIMIZED) ---
+      - name: Init & Sync GKI
+        run: |
+          mkdir gki && cd gki
+          # Filter grup untuk hemat disk space
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1 --groups=all,-notdefault,-device,-mips,-x86,-darwin
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
+          
+      - name: Update kernel source for GKI 5.10
+        run: |
+          cd gki/common
+          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
+          git fetch -j12 rama
+          git checkout -b update-android12-5.10-staging rama/android12-5.10-staging
+          rm -rf drivers/staging/kernelsu
+
+      # --- COMMON FIX (Infinix Camera) ---
+      - name: Apply Infinix GT 20 Pro Camera Fix
+        working-directory: gki/common
+        run: |
+          echo "📸 Applying Infinix GT 20 Pro Camera Fix..."
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" -o infinix_cam.patch
+          patch -p1 < infinix_cam.patch || echo "✅ Patch kamera sudah tertanam."
+
+     # --- SETUP KSU & SUSFS (FAIL-SAFE METHOD) ---
+      - name: Setup Root Variant & Inject Configs
+        if: matrix.variant == 'MULTIMANAGER'
+        working-directory: gki/common
+        run: |
+          # 1. Bersihkan & Siapkan Environment
+          rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU KernelSU-Next
+          
+          # 2. Setup KernelSU-Next (Gunakan script resmi agar bersih)
+          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          sed -i 's/$(error KSU requires Kprobes; enable it (defconfig))/# $(error KSU requires Kprobes; enable it (defconfig))/' drivers/kernelsu/Kbuild
+            
+          # Apply All Managers Patch
+          echo "🔧 Applying Patch for All Managers Support..."
+          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/gki-builder/refs/heads/6.x/kernel-patches/ksu/ksun-add-more-managers-support.patch" -o /tmp/ksun-add-more-managers-support.patch
+          cd KernelSU-Next && patch -p1 < /tmp/ksun-add-more-managers-support.patch && cd ..
+          echo "✅ All Managers Patch Applied"
+            
+          # Apply SUSFS
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
+          rm -rf sus/.git
+          susfs=sus/kernel_patches
+          cp -r $susfs/fs . && cp -r $susfs/include . && cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+
+      # --- APPLY CRITICAL FIXES (Anti Reboot) ---
+      - name: Apply Critical Fixes
+        working-directory: gki/common
+        run: |
+          echo "🔧 Patching Kconfig for Stack Protector Control..."
+          sed -i '/config STACKPROTECTOR_PER_TASK/,/def_bool y/ s/def_bool y/bool "Stack Protector per task"\n\tdefault n/' arch/arm64/Kconfig
+          
+          echo "🔧 Fixing Xiaomi Module Version mismatch..."
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          
+          echo "🔧 Removing DRM Helper Panics (Bootloop Fix)..."
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+          
+          sed -i 's/check_defconfig//' build.config.gki
+          
+      - name: Clean Build Config Line
+        run: sed -i '2d' gki/common/build.config.gki
+
+      - name: Fix SUSFS Uname Symbol Error
+        working-directory: gki/common
+        run: |
+          if [ "${{ matrix.variant }}" == "KernelSU-Next" ] || [ "${{ matrix.variant }}" == "KernelSU-Next (All Managers)" ]; then
+            echo "🛠️ Applying fix for undefined SUSFS symbols (KernelSU-Next)..."
+            sed -i 's/#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME/#if 0 \/\* CONFIG_KSU_SUSFS_SPOOF_UNAME Disabled to fix build \*\//' drivers/kernelsu/supercalls.c
+            echo "✅ SUSFS symbol fix applied for KernelSU-Next."
+          else 
+            echo "⏭️ Skipping SUSFS fix (Not needed for ${{ matrix.variant }})"
+          fi
+        
+      - name: Configure Kernel
+        working-directory: gki/common
+        run: |
+          TARGET_CONFIG="arch/arm64/configs/gki_defconfig"
+          VARIANT="${{ matrix.variant }}"
+          
+          echo "🧹 Sanitizing defconfig before injection..."
+          sed -i '/CONFIG_STACKPROTECTOR_PER_TASK/d' $TARGET_CONFIG
+          sed -i '/CONFIG_HZ_/d' $TARGET_CONFIG
+          sed -i '/CONFIG_BPF_JIT/d' $TARGET_CONFIG
+          sed -i '/CONFIG_KSU/d' $TARGET_CONFIG
+          sed -i '/CONFIG_NO_HZ/d' $TARGET_CONFIG
+          sed -i '/CONFIG_PREEMPT/d' $TARGET_CONFIG
+          sed -i '/CONFIG_MQ/d' $TARGET_CONFIG
+          
+          echo "⚙️ Injecting Configuration..."
+          cat >> $TARGET_CONFIG <<EOF
+          # Anti-Random Reboot Guard (CRITICAL for MT6789)
+          CONFIG_STACKPROTECTOR_PER_TASK=n
+
+          # Performance & Smoothness
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BIC=y
+          CONFIG_TCP_CONG_CUBIC=y
+          CONFIG_TCP_CONG_WESTWOOD=y
+          CONFIG_TCP_CONG_HTCP=y
+          CONFIG_DEFAULT_BBR=y
+          CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
+          CONFIG_CPU_FREQ_GOV_ONDEMAND=y
+          CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y
+          CONFIG_CPU_FREQ_GOV_USERSPACE=y
+          CONFIG_MQ_KYBER=y          
+          CONFIG_MQ_IOSCHED_DEADLINE=y
+          CONFIG_MQ_IOSCHED_DEADLINE_CGROUP=y
+          CONFIG_MQ_IOSCHED_KYBER=y
+          CONFIG_IOSCHED_BFQ=y
+          CONFIG_BFQ_GROUP_IOSCHED=y
+          # CONFIG_BFQ_CGROUP_DEBUG is not set
+          CONFIG_MQ_IOSCHED_SSG=y
+          CONFIG_MQ_IOSCHED_SSG_CGROUP=y
+          # CONFIG_MQ_DEADLINE_DEFAULT is not set
+          # CONFIG_MQ_KYBER_DEFAULT is not set
+          # CONFIG_BFQ_DEFAULT is not set
+          CONFIG_MQ_SSG_DEFAULT=y
+          
+          # BPF Performance
+          CONFIG_BPF_SYSCALL=y
+          CONFIG_BPF_JIT=y
+          CONFIG_BPF_JIT_ALWAYS_ON=y
+          CONFIG_BPF_JIT_DEFAULT_ON=y
+          CONFIG_PREEMPT=y
+          CONFIG_PREEMPT_COUNT=y
+          CONFIG_PREEMPTION=y
+          CONFIG_HZ_300=y
+          CONFIG_NO_HZ=y
+
+          # Base Stability
+          CONFIG_PSI=y
+          CONFIG_MEMCG=y
+          CONFIG_MEMCG_SWAP=y
+          CONFIG_LOCALVERSION_AUTO=n
+          EOF
+
+          # Inject SUSFS Config (ONLY IF VARIANT IS KSU)
+          if [ "$VARIANT" == "MULTIMANAGER" ]; then
+            echo "💉 Injecting SUSFS for $VARIANT..."
+            cat >> $TARGET_CONFIG <<EOF
+           CONFIG_KSU=y
+           CONFIG_KPM=y
+           CONFIG_KSU_SUSFS_SUS_SU=n
+           CONFIG_KSU_SYSCALL_HOOK=n
+           CONFIG_KPROBES=y
+           CONFIG_KPROBE_EVENTS=y
+           CONFIG_OVERLAY_FS=y
+            
+           #SUSFS Configs
+           CONFIG_KSU_SUSFS=y
+           CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+           CONFIG_KSU_SUSFS_SUS_PATH=y
+           CONFIG_KSU_SUSFS_SUS_MOUNT=y
+           CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
+           CONFIG_KSU_SUSFS_SUS_KSTAT=y
+           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
+           CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+           CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+           CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+           CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+           CONFIG_KSU_SUSFS_ENABLE_LOG=y
+           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+           CONFIG_KSU_MANUAL_HOOK=n
+           CONFIG_KSU_HAS_MANUAL_HOOK=n
+          EOF
+          fi
+
+      - name: Setup Version Name
+        working-directory: gki/common
+        run: |
+          RAW_NAME="${{ github.event.inputs.kernel_name }}"
+          CLEAN_NAME=$(echo $RAW_NAME | tr -d '[:space:]')
+          rm -f localversion*
+          sed -i 's/^EXTRAVERSION =.*/EXTRAVERSION =/' Makefile
+          echo "-$CLEAN_NAME" > localversion
+          echo "✅ Version set to: -$CLEAN_NAME"
+
+      # --- COMPILER SETUP (Sesuai build.config.common) ---
+      - name: Setup Compiler (Clang 12)
+        working-directory: gki
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          ACTUAL_VER="clang-r487747c"
+          ACTUAL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/clang-r487747c.tar.gz"
+          EXPECTED_VER="clang-r563880b"
+          mkdir -p "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          curl -L "$ACTUAL_URL" | tar -xz -C "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          cd prebuilts-master/clang/host/linux-x86
+          rm -rf "$EXPECTED_VER"
+          ln -s "$ACTUAL_VER" "$EXPECTED_VER"
+
+      - name: Execute Build
+        working-directory: gki
+        run: |
+          echo "🚀 Starting Compilation for ${{ matrix.variant }}..."
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
+          export KMI_ENFORCED=0
+          export TRIM_NONLISTED_KMI=0
+          LTO=thin LLVM=1 LLVM_IAS=1 \
+          KCFLAGS="-O3 -Wno-error=implicit-function-declaration -Wno-error=unused-command-line-argument" \
+          BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+      # --- PACKAGING & RELEASE ---
+      - name: Packaging anykernel & Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # Ambil Base Version dari Makefile
+          BASE_VER=$(make -s kernelversion -C gki/common | tr -d '\n\r')
+          FULL_VER=$(make -s kernelversion -C gki/common | tr -d '\n\r')
+          DATE=$(date +"%Y%m%d")
+          
+          # Ambil nama dari Input User
+          KNAME="${{ github.event.inputs.kernel_name }}"
+          [ -z "$KNAME" ] && KNAME="Zixine"
+          
+          # Tambahkan Varian Matrix ke nama file ZIP
+          VARIANT="${{ matrix.variant }}"
+          ZIP_NAME="RE-GKI-zixine-elysium-inline-${VARIANT}-${DATE}.zip"
+          
+          AK3_REPO="https://github.com/zixine/anykernel" 
+          git clone -q --depth=1 "$AK3_REPO" -b main anykernel
+          
+          IMG=$(find gki/out -name "Image" -type f | head -n 1)
+          if [ -z "$IMG" ]; then echo "❌ Error: Image not found!"; exit 1; fi
+          
+          cp "$IMG" anykernel/
+          
+          # Set kernel string di anykernel.sh
+          sed -i "s|kernel.string=.*|kernel.string=${FULL_VER} by Zixine|g" anykernel/anykernel.sh
+          
+          cd anykernel
+          chmod +x anykernel.sh tools/magiskboot tools/ak3-core.sh META-INF/com/google/android/update-binary
+          zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md
+          cd ..
+          
+          # Release ke Repo Tujuan
+          TARGET_REPO="zixine/Kernel-GKI-12-5.10-release"
+          RELEASE_TAG="${KNAME}-${DATE}"
+          
+          echo "🚀 Attempting to create or upload to release: $RELEASE_TAG"
+          
+          if ! gh release create "$RELEASE_TAG" "$ZIP_NAME" --repo "$TARGET_REPO" --title "Zixine ${DATE}" --notes "Automated Matrix Build" --prerelease=false 2>/dev/null; then
+            echo "⚠️ Release creation failed (Release might already exist). Attempting to upload to existing release..."
+            gh release upload "$RELEASE_TAG" "$ZIP_NAME" --repo "$TARGET_REPO" --clobber
+          else
+            echo "✅ Release created and asset uploaded successfully."
+          fi
+      - name: Archive Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.variant }}
+          path: gki/out/android12-5.10/common/build.log
