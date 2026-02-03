@@ -62,45 +62,47 @@ jobs:
           git checkout -b update-android12-5.10-staging rama/android12-5.10-staging
           rm -rf drivers/staging/kernelsu
 
-      - name: Setup KernelSU-Next & SUSFS
+      # ... (Bagian atas tetap sama sampai Setup KernelSU-Next)
+
+      - name: Setup KernelSU-Next & SUSFS (Clean Patch)
         working-directory: gki/common
         run: |
+          # 1. Bersihkan referensi lama di Makefile agar tidak Error 2
+          sed -i '/kernelsu/d' drivers/Makefile
+          sed -i '/kernelsu/d' drivers/Kconfig
+          
+          # 2. Hapus sisa-sisa folder
           rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU KernelSU-Next
+          
+          # 3. Jalankan setup resmi
           curl -LSs "https://raw.githubusercontent.com/Kingfinik98/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
           
-          # Patch Managers Support
-          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/gki-builder/refs/heads/6.x/kernel-patches/ksu/ksun-add-more-managers-support.patch" -o /tmp/ksun-add-more-managers-support.patch
-          cd KernelSU-Next && patch -p1 < /tmp/ksun-add-more-managers-support.patch && cd ..
+          # 4. Patch Managers Support
+          cd KernelSU-Next && curl -LSs "https://raw.githubusercontent.com/Kingfinik98/gki-builder/refs/heads/6.x/kernel-patches/ksu/ksun-add-more-managers-support.patch" | patch -p1 && cd ..
             
-          # SUSFS Integration
+          # 5. Integrasi SUSFS
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
-          susfs=sus/kernel_patches
-          cp -r $susfs/fs . && cp -r $susfs/include . && cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+          cp -r sus/kernel_patches/fs . && cp -r sus/kernel_patches/include .
+          patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
-      - name: Configure Kernel (RESTORED + REFINED)
+      - name: Configure Kernel (RESTORED)
         working-directory: gki/common
         run: |
           TARGET_CONFIG="arch/arm64/configs/gki_defconfig"
-          
-          echo "🧹 Cleaning conflicting configs..."
-          # Kita bersihkan agar tidak ada duplikasi yang bikin build gagal
+          # Bersihkan semua config terkait sebelum injeksi (VITAL)
           CONFIGS="KPROBES KPROBE_EVENTS STACKPROTECTOR_PER_TASK HZ_ BPF_JIT KSU NO_HZ PREEMPT MQ_IOSCHED ZRAM CPU_FREQ_GOV_ PERFORMANCE MEMCG TCP_CONG"
           for config in $CONFIGS; do
             sed -i "/CONFIG_$config/d" $TARGET_CONFIG
           done
           
-          echo "⚙️ Injecting FULL Configuration (Your Work + My Refinement)..."
           cat >> $TARGET_CONFIG <<EOF
-          # --- Core & KSU ---
+          # --- Injeksi Jam-Jam Kerja Kamu ---
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_KSU=y
           CONFIG_KPM=y
           CONFIG_OVERLAY_FS=y
           CONFIG_STACKPROTECTOR_PER_TASK=n
-          
-          # --- TCP Congestion (Your Restoration) ---
           CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BBR=y
           CONFIG_TCP_CONG_BIC=y
@@ -108,105 +110,48 @@ jobs:
           CONFIG_TCP_CONG_WESTWOOD=y
           CONFIG_TCP_CONG_HTCP=y
           CONFIG_DEFAULT_BBR=y
-          
-          # --- CPU Frequency Governors (Your Restoration) ---
           CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
           CONFIG_CPU_FREQ_GOV_ONDEMAND=y
           CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y
-          CONFIG_CPU_FREQ_GOV_USERSPACE=y
           CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
-          
-          # --- I/O Schedulers (Your Restoration + Cold Start Fix) ---
-          CONFIG_MQ_KYBER=y          
           CONFIG_MQ_IOSCHED_DEADLINE=y
-          CONFIG_MQ_IOSCHED_DEADLINE_CGROUP=y
-          CONFIG_MQ_IOSCHED_KYBER=y
-          CONFIG_IOSCHED_BFQ=y
-          CONFIG_BFQ_GROUP_IOSCHED=y
-          CONFIG_MQ_IOSCHED_SSG=y
-          CONFIG_MQ_IOSCHED_SSG_CGROUP=y
-          CONFIG_MQ_SSG_DEFAULT=n
           CONFIG_DEFAULT_MQ_DEADLINE=y
-          
-          # --- Task & Scheduler (Performance Foundation) ---
-          CONFIG_BPF_SYSCALL=y
-          CONFIG_BPF_JIT=y
-          CONFIG_BPF_JIT_ALWAYS_ON=y
-          CONFIG_BPF_JIT_DEFAULT_ON=y
-          CONFIG_PREEMPT=y
-          CONFIG_PREEMPT_COUNT=y
-          CONFIG_PREEMPTION=y
           CONFIG_HZ_300=y
-          CONFIG_NO_HZ=y
-          CONFIG_PSI=y
-          
-          # --- Memory Management ---
-          CONFIG_MEMCG=n
+          CONFIG_PREEMPT=y
+          CONFIG_PREEMPTION=y
+          CONFIG_MEMCG=y
           CONFIG_MEMCG_SWAP=n
-          CONFIG_LOCALVERSION_AUTO=n
-          
-          # --- SUSFS Configs (Full Restoration) ---
           CONFIG_KSU_SUSFS=y
-          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_PATH=y
-          CONFIG_KSU_SUSFS_SUS_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
-          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
-          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
           CONFIG_KSU_SUSFS_SPOOF_UNAME=y
           CONFIG_KSU_SUSFS_ENABLE_LOG=y
-          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-          CONFIG_KSU_MANUAL_HOOK=n
-          CONFIG_KSU_HAS_MANUAL_HOOK=n
+          CONFIG_LOCALVERSION_AUTO=n
           EOF
 
-      - name: Setup Version Name
-        working-directory: gki/common
-        run: |
-          RAW_NAME="${{ github.event.inputs.kernel_name }}"
-          CLEAN_NAME=$(echo $RAW_NAME | tr -d '[:space:]')
-          echo "-$CLEAN_NAME" > localversion
-
-      - name: Setup Proton Clang (Isolation)
+      - name: Execute Build (The Nuclear Option)
         working-directory: gki
         run: |
-          # Sabotase folder prebuilts internal Rama agar tidak tertukar
-          rm -rf prebuilts-master/clang/host/linux-x86/*
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang proton-clang
-
-      - name: Execute Build (Atomic Verification)
-        working-directory: gki
-        run: |
+          # 1. Setup Compiler
           export PATH="$(pwd)/proton-clang/bin:$PATH"
           CONFIG_FILE="common/build.config.gki.aarch64"
           
-          # Bersihkan jalur lama
+          # 2. Paksa jalur compiler ke Proton
           sed -i '/CLANG_PREBUILT_BIN/d' common/build.config*
-          sed -i '/CLANG_VERSION/d' common/build.config*
           echo "CLANG_PREBUILT_BIN=proton-clang/bin" >> $CONFIG_FILE
           
-          # FORCE CONFIG: Mekanisme terakhir untuk menjamin KSU & Kprobes tidak hilang
-          echo "" >> $CONFIG_FILE
-          echo "update_config() {" >> $CONFIG_FILE
-          echo "  echo '🛠️ FORCING FINAL CONFIGURATION...'" >> $CONFIG_FILE
-          echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KPROBES" >> $CONFIG_FILE
-          echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KPROBE_EVENTS" >> $CONFIG_FILE
-          echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KSU" >> $CONFIG_FILE
-          echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KSU_SUSFS" >> $CONFIG_FILE
-          echo "}" >> $CONFIG_FILE
-          echo "POST_DEFCONFIG_CMDS+=\" update_config\"" >> $CONFIG_FILE
+          # 3. REVISI FORCE CONFIG: Kita tidak pakai POST_DEFCONFIG_CMDS dulu 
+          # karena sering menyebabkan Error 2 jika shell-nya tidak pas.
+          # Kita pakai cara yang lebih 'kasar' tapi pasti:
+          
+          echo "🛠️ Hardpatching defconfig to ensure KPROBES..."
+          sed -i 's/CONFIG_KPROBES=n/CONFIG_KPROBES=y/g' common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KPROBES=y" >> common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU=y" >> common/arch/arm64/configs/gki_defconfig
           
           export KMI_SYMBOL_LIST_STRICT_MODE=0
           export KMI_ENFORCED=0
           export TRIM_NONLISTED_KMI=0
           
+          # 4. Jalankan Build tanpa LTO dulu untuk memastikan stabilitas
           LTO=thin \
           LLVM=1 \
           LLVM_IAS=1 \
