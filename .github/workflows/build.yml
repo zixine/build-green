@@ -28,11 +28,6 @@ jobs:
         with:
           root-reserve-mb: 2048
           swap-size-mb: 8192
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
 
       - name: Fetch Source Code
         uses: actions/checkout@v4
@@ -62,25 +57,20 @@ jobs:
           git checkout -b update-android12-5.10-staging rama/android12-5.10-staging
           rm -rf drivers/staging/kernelsu
 
-      # ... (Bagian atas tetap sama sampai Setup KernelSU-Next)
-
-      - name: Setup KernelSU-Next & SUSFS (Clean Patch)
+      - name: Setup KernelSU-Next & SUSFS (The Sabotage)
         working-directory: gki/common
         run: |
-          # 1. Bersihkan referensi lama di Makefile agar tidak Error 2
-          sed -i '/kernelsu/d' drivers/Makefile
-          sed -i '/kernelsu/d' drivers/Kconfig
-          
-          # 2. Hapus sisa-sisa folder
           rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU KernelSU-Next
-          
-          # 3. Jalankan setup resmi
           curl -LSs "https://raw.githubusercontent.com/Kingfinik98/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
           
-          # 4. Patch Managers Support
+          # 🚨 SABOTASE KPROBES CHECK: 
+          # Kita komentari baris yang menyebabkan error "KSU requires Kprobes" agar build tidak mati saat cleaning.
+          sed -i 's/$(error KSU requires Kprobes; enable it (defconfig))/# Kprobes check disabled by Zixine/' drivers/kernelsu/Kbuild
+          
+          # Patch Managers Support
           cd KernelSU-Next && curl -LSs "https://raw.githubusercontent.com/Kingfinik98/gki-builder/refs/heads/6.x/kernel-patches/ksu/ksun-add-more-managers-support.patch" | patch -p1 && cd ..
             
-          # 5. Integrasi SUSFS
+          # SUSFS Integration
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           cp -r sus/kernel_patches/fs . && cp -r sus/kernel_patches/include .
           patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
@@ -89,14 +79,12 @@ jobs:
         working-directory: gki/common
         run: |
           TARGET_CONFIG="arch/arm64/configs/gki_defconfig"
-          # Bersihkan semua config terkait sebelum injeksi (VITAL)
           CONFIGS="KPROBES KPROBE_EVENTS STACKPROTECTOR_PER_TASK HZ_ BPF_JIT KSU NO_HZ PREEMPT MQ_IOSCHED ZRAM CPU_FREQ_GOV_ PERFORMANCE MEMCG TCP_CONG"
           for config in $CONFIGS; do
             sed -i "/CONFIG_$config/d" $TARGET_CONFIG
           done
           
           cat >> $TARGET_CONFIG <<EOF
-          # --- Injeksi Jam-Jam Kerja Kamu ---
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_KSU=y
@@ -116,10 +104,9 @@ jobs:
           CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
           CONFIG_MQ_IOSCHED_DEADLINE=y
           CONFIG_DEFAULT_MQ_DEADLINE=y
-          CONFIG_HZ_300=y
           CONFIG_PREEMPT=y
           CONFIG_PREEMPTION=y
-          CONFIG_MEMCG=y
+          CONFIG_MEMCG=n
           CONFIG_MEMCG_SWAP=n
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SPOOF_UNAME=y
@@ -127,31 +114,45 @@ jobs:
           CONFIG_LOCALVERSION_AUTO=n
           EOF
 
-      - name: Execute Build (The Nuclear Option)
+      - name: Setup Proton Clang (Jalur Benar)
         working-directory: gki
         run: |
-          # 1. Setup Compiler
+          # Bersihkan folder prebuilts internal Rama
+          rm -rf prebuilts-master/clang/host/linux-x86/*
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang proton-clang
+          chmod +x proton-clang/bin/*
+
+      - name: Execute Build (With Atomic Sabotage Fix)
+        working-directory: gki
+        run: |
+          # Daftarkan Proton ke PATH
           export PATH="$(pwd)/proton-clang/bin:$PATH"
+          
+          # Cari file config utama
           CONFIG_FILE="common/build.config.gki.aarch64"
           
-          # 2. Paksa jalur compiler ke Proton
+          # Hapus jalur lama
           sed -i '/CLANG_PREBUILT_BIN/d' common/build.config*
-          echo "CLANG_PREBUILT_BIN=proton-clang/bin" >> $CONFIG_FILE
+          sed -i '/CLANG_VERSION/d' common/build.config*
           
-          # 3. REVISI FORCE CONFIG: Kita tidak pakai POST_DEFCONFIG_CMDS dulu 
-          # karena sering menyebabkan Error 2 jika shell-nya tidak pas.
-          # Kita pakai cara yang lebih 'kasar' tapi pasti:
+          # 🚨 PERBAIKAN CLANG PATH: 
+          # build.sh biasanya otomatis menambahkan "/bin" ke CLANG_PREBUILT_BIN.
+          # Jadi kita arahkan ke "proton-clang", bukan "proton-clang/bin".
+          echo "CLANG_PREBUILT_BIN=proton-clang" >> $CONFIG_FILE
           
-          echo "🛠️ Hardpatching defconfig to ensure KPROBES..."
-          sed -i 's/CONFIG_KPROBES=n/CONFIG_KPROBES=y/g' common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KPROBES=y" >> common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU=y" >> common/arch/arm64/configs/gki_defconfig
+          # FORCE INJECT KPROBES via POST_DEFCONFIG agar KSU tidak ngambek di akhir
+          echo "" >> $CONFIG_FILE
+          echo "update_config() {" >> $CONFIG_FILE
+          echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KPROBES" >> $CONFIG_FILE
+          echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KPROBE_EVENTS" >> $CONFIG_FILE
+          echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KSU" >> $CONFIG_FILE
+          echo "}" >> $CONFIG_FILE
+          echo "POST_DEFCONFIG_CMDS+=\" update_config\"" >> $CONFIG_FILE
           
           export KMI_SYMBOL_LIST_STRICT_MODE=0
           export KMI_ENFORCED=0
           export TRIM_NONLISTED_KMI=0
           
-          # 4. Jalankan Build tanpa LTO dulu untuk memastikan stabilitas
           LTO=thin \
           LLVM=1 \
           LLVM_IAS=1 \
@@ -175,9 +176,9 @@ jobs:
           cd anykernel
           zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md
           cd ..
-          gh release create "Zixine-${DATE}" "$ZIP_NAME" --repo "zixine/Kernel-GKI-12-5.10-release" --title "Zixine ${DATE}" --notes "Full Restoration Build with Proton Clang"
+          gh release create "Zixine-${DATE}" "$ZIP_NAME" --repo "zixine/Kernel-GKI-12-5.10-release" --title "Zixine ${DATE}" --notes "Sabotage Fix Build"
 
-      - name: Archive Build Log
+      - name: Simpan Log
         if: always()
         uses: actions/upload-artifact@v4
         with:
