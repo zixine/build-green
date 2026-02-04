@@ -6,7 +6,7 @@ on:
       kernel_name:
         description: 'Nama Kernel'
         required: true
-        default: 'Zixine-Elysium-inline-1.5'
+        default: 'Zixine-Elysium-inline-2.0'
         type: string
 
 jobs:
@@ -60,37 +60,47 @@ jobs:
       - name: Setup KernelSU-Next & SUSFS (The Sabotage)
         working-directory: gki/common
         run: |
+          # 1. Bersihkan referensi lama agar tidak Error 2 (_clean_drivers)
+          sed -i '/kernelsu/d' drivers/Makefile
+          sed -i '/kernelsu/d' drivers/Kconfig
           rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU KernelSU-Next
+          
+          # 2. Setup KernelSU-Next
           curl -LSs "https://raw.githubusercontent.com/Kingfinik98/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
           
-          # 🚨 SABOTASE KPROBES CHECK: 
-          # Kita komentari baris yang menyebabkan error "KSU requires Kprobes" agar build tidak mati saat cleaning.
-          sed -i 's/$(error KSU requires Kprobes; enable it (defconfig))/# Kprobes check disabled by Zixine/' drivers/kernelsu/Kbuild
+          # 🚨 SABOTASE KPROBES: Membungkam pengecekan Kprobes agar tidak mati saat cleaning (make mrproper)
+          sed -i 's/$(error KSU requires Kprobes; enable it (defconfig))/# Kprobes check bypassed by Zixine/' drivers/kernelsu/Kbuild
           
-          # Patch Managers Support
+          # 3. Patch All Managers Support
           cd KernelSU-Next && curl -LSs "https://raw.githubusercontent.com/Kingfinik98/gki-builder/refs/heads/6.x/kernel-patches/ksu/ksun-add-more-managers-support.patch" | patch -p1 && cd ..
             
-          # SUSFS Integration
+          # 4. Integrasi SUSFS
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           cp -r sus/kernel_patches/fs . && cp -r sus/kernel_patches/include .
           patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
-      - name: Configure Kernel (RESTORED)
+      - name: Configure Kernel (TOTAL RESTORATION)
         working-directory: gki/common
         run: |
           TARGET_CONFIG="arch/arm64/configs/gki_defconfig"
-          CONFIGS="KPROBES KPROBE_EVENTS STACKPROTECTOR_PER_TASK HZ_ BPF_JIT KSU NO_HZ PREEMPT MQ_IOSCHED ZRAM CPU_FREQ_GOV_ PERFORMANCE MEMCG TCP_CONG"
+          
+          echo "🧹 Cleaning conflicting configs..."
+          CONFIGS="KPROBES KPROBE_EVENTS STACKPROTECTOR_PER_TASK HZ_ BPF_JIT KSU NO_HZ PREEMPT MQ_IOSCHED ZRAM CPU_FREQ_GOV_ PERFORMANCE MEMCG TCP_CONG SUSFS"
           for config in $CONFIGS; do
             sed -i "/CONFIG_$config/d" $TARGET_CONFIG
           done
           
+          echo "⚙️ Injecting FULL RESTORED Configuration..."
           cat >> $TARGET_CONFIG <<EOF
+          # --- Core & KSU (Wajib untuk kompilasi) ---
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_KSU=y
           CONFIG_KPM=y
           CONFIG_OVERLAY_FS=y
           CONFIG_STACKPROTECTOR_PER_TASK=n
+          
+          # --- TCP Congestion (Your Restoration) ---
           CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BBR=y
           CONFIG_TCP_CONG_BIC=y
@@ -98,53 +108,70 @@ jobs:
           CONFIG_TCP_CONG_WESTWOOD=y
           CONFIG_TCP_CONG_HTCP=y
           CONFIG_DEFAULT_BBR=y
+          
+          # --- CPU Governors (Your Restoration) ---
           CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
           CONFIG_CPU_FREQ_GOV_ONDEMAND=y
           CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y
+          CONFIG_CPU_FREQ_GOV_USERSPACE=y
           CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
+          
+          # --- I/O & Performance (Fix Aplikasi Lambat) ---
           CONFIG_MQ_IOSCHED_DEADLINE=y
           CONFIG_DEFAULT_MQ_DEADLINE=y
+          CONFIG_HZ_300=y
           CONFIG_PREEMPT=y
           CONFIG_PREEMPTION=y
           CONFIG_MEMCG=n
           CONFIG_MEMCG_SWAP=n
+          
+          # --- SUSFS (Full Restoration) ---
           CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
           CONFIG_KSU_SUSFS_SPOOF_UNAME=y
           CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          
           CONFIG_LOCALVERSION_AUTO=n
           EOF
 
-      - name: Setup Proton Clang (Jalur Benar)
+      - name: Setup Proton Clang (Mirroring Rama's Path)
         working-directory: gki
         run: |
-          # Bersihkan folder prebuilts internal Rama
+          # Sabotase folder prebuilts internal Rama agar sistem build dipaksa pakai Proton
           rm -rf prebuilts-master/clang/host/linux-x86/*
           git clone --depth=1 https://github.com/kdrag0n/proton-clang proton-clang
-          chmod +x proton-clang/bin/*
+          
+          # Mirroring ke jalur yang dicari script Rama
+          mkdir -p prebuilts-master/clang/host/linux-x86/clang-r563880b
+          cp -r proton-clang/* prebuilts-master/clang/host/linux-x86/clang-r563880b/
+          chmod +x prebuilts-master/clang/host/linux-x86/clang-r563880b/bin/*
 
-      - name: Execute Build (With Atomic Sabotage Fix)
+      - name: Execute Build (The Atomic Fix)
         working-directory: gki
         run: |
-          # Daftarkan Proton ke PATH
-          export PATH="$(pwd)/proton-clang/bin:$PATH"
-          
-          # Cari file config utama
+          export PATH="$(pwd)/prebuilts-master/clang/host/linux-x86/clang-r563880b/bin:$PATH"
           CONFIG_FILE="common/build.config.gki.aarch64"
           
-          # Hapus jalur lama
+          # Pastikan variabel CLANG_PREBUILT_BIN menunjuk ke mirroring kita
           sed -i '/CLANG_PREBUILT_BIN/d' common/build.config*
-          sed -i '/CLANG_VERSION/d' common/build.config*
+          echo "CLANG_PREBUILT_BIN=prebuilts-master/clang/host/linux-x86/clang-r563880b/bin" >> $CONFIG_FILE
           
-          # 🚨 PERBAIKAN CLANG PATH: 
-          # build.sh biasanya otomatis menambahkan "/bin" ke CLANG_PREBUILT_BIN.
-          # Jadi kita arahkan ke "proton-clang", bukan "proton-clang/bin".
-          echo "CLANG_PREBUILT_BIN=proton-clang" >> $CONFIG_FILE
-          
-          # FORCE INJECT KPROBES via POST_DEFCONFIG agar KSU tidak ngambek di akhir
+          # FORCE INJECT: Jaring pengaman terakhir agar KPROBES benar-benar masuk di .config akhir
           echo "" >> $CONFIG_FILE
           echo "update_config() {" >> $CONFIG_FILE
           echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KPROBES" >> $CONFIG_FILE
-          echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KPROBE_EVENTS" >> $CONFIG_FILE
           echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KSU" >> $CONFIG_FILE
           echo "}" >> $CONFIG_FILE
           echo "POST_DEFCONFIG_CMDS+=\" update_config\"" >> $CONFIG_FILE
@@ -153,15 +180,13 @@ jobs:
           export KMI_ENFORCED=0
           export TRIM_NONLISTED_KMI=0
           
-          LTO=thin \
-          LLVM=1 \
-          LLVM_IAS=1 \
+          LTO=thin LLVM=1 LLVM_IAS=1 \
           CROSS_COMPILE=aarch64-linux-gnu- \
           CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
           BUILD_CONFIG=$CONFIG_FILE \
           build/build.sh
 
-      - name: Packaging anykernel & Release
+      - name: Packaging & Release
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
@@ -173,14 +198,5 @@ jobs:
           IMG=$(find gki/out -name "Image" -type f | head -n 1)
           cp "$IMG" anykernel/
           sed -i "s|kernel.string=.*|kernel.string=${FULL_VER} by Zixine|g" anykernel/anykernel.sh
-          cd anykernel
-          zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md
-          cd ..
-          gh release create "Zixine-${DATE}" "$ZIP_NAME" --repo "zixine/Kernel-GKI-12-5.10-release" --title "Zixine ${DATE}" --notes "Sabotage Fix Build"
-
-      - name: Simpan Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: gki/out/android12-5.10/common/build.log
+          cd anykernel && zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md && cd ..
+          gh release create "Zixine-${DATE}" "$ZIP_NAME" --repo "zixine/Kernel-GKI-12-5.10-release" --title "Zixine ${DATE}" --notes "Full Restoration Build with Mirroring Path & Sabotage Fix"
