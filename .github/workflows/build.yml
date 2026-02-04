@@ -6,13 +6,13 @@ on:
       kernel_name:
         description: 'Nama Kernel'
         required: true
-        default: 'Zixine-Elysium-inline-2.0'
+        default: 'Zixine-Elysium-inline-1.5'
         type: string
 
 jobs:
   build-multimanager:
     name: Build MULTIMANAGER
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     
@@ -60,26 +60,41 @@ jobs:
       - name: Setup KernelSU-Next & SUSFS (The Sabotage)
         working-directory: gki/common
         run: |
-          # 1. Bersihkan referensi lama agar tidak Error 2 (_clean_drivers)
+          # Bersihkan jalur lama agar tidak Error 2 (_clean_drivers)
           sed -i '/kernelsu/d' drivers/Makefile
           sed -i '/kernelsu/d' drivers/Kconfig
           rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU KernelSU-Next
           
-          # 2. Setup KernelSU-Next
+          # Setup KernelSU-Next
           curl -LSs "https://raw.githubusercontent.com/Kingfinik98/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
           
-          # 🚨 SABOTASE KPROBES: Membungkam pengecekan Kprobes agar tidak mati saat cleaning (make mrproper)
+          # SABOTASE KPROBES: Membungkam pengecekan Kprobes agar tidak mati saat cleaning (make mrproper)
           sed -i 's/$(error KSU requires Kprobes; enable it (defconfig))/# Kprobes check bypassed by Zixine/' drivers/kernelsu/Kbuild
           
-          # 3. Patch All Managers Support
+          # Patch Managers Support & SUSFS
           cd KernelSU-Next && curl -LSs "https://raw.githubusercontent.com/Kingfinik98/gki-builder/refs/heads/6.x/kernel-patches/ksu/ksun-add-more-managers-support.patch" | patch -p1 && cd ..
-            
-          # 4. Integrasi SUSFS
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           cp -r sus/kernel_patches/fs . && cp -r sus/kernel_patches/include .
           patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
-      - name: Configure Kernel (TOTAL RESTORATION)
+      - name: Apply Critical Bootloop Fixes (Garnet & Transsion)
+        working-directory: gki/common
+        run: |
+          echo "🛠️ Applying Stack Protector fix..."
+          # Mengubah def_bool y menjadi bool yang bisa di-unset
+          sed -i '/config STACKPROTECTOR_PER_TASK/,/def_bool y/ s/def_bool y/bool "Stack Protector per task"\n\tdefault n/' arch/arm64/Kconfig
+          
+          echo "🩹 Applying Module & DRM Xiaomi Compatibility patches..."
+          # Hack agar kernel menerima modul dengan simbol versi berbeda (Biang keladi lag, tapi wajib buat boot)
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          
+          # DRM Clone validation removal
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+          
+          echo "✅ Critical fixes applied."
+
+      - name: Configure Kernel (Total Integrity Restoration)
         working-directory: gki/common
         run: |
           TARGET_CONFIG="arch/arm64/configs/gki_defconfig"
@@ -90,9 +105,9 @@ jobs:
             sed -i "/CONFIG_$config/d" $TARGET_CONFIG
           done
           
-          echo "⚙️ Injecting FULL RESTORED Configuration..."
+          echo "⚙️ Injecting FULL Configuration..."
           cat >> $TARGET_CONFIG <<EOF
-          # --- Core & KSU (Wajib untuk kompilasi) ---
+          # --- Core & KSU ---
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_KSU=y
@@ -100,7 +115,7 @@ jobs:
           CONFIG_OVERLAY_FS=y
           CONFIG_STACKPROTECTOR_PER_TASK=n
           
-          # --- TCP Congestion (Your Restoration) ---
+          # --- TCP Congestion (Restored) ---
           CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BBR=y
           CONFIG_TCP_CONG_BIC=y
@@ -109,7 +124,7 @@ jobs:
           CONFIG_TCP_CONG_HTCP=y
           CONFIG_DEFAULT_BBR=y
           
-          # --- CPU Governors (Your Restoration) ---
+          # --- CPU Governors (Restored) ---
           CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
           CONFIG_CPU_FREQ_GOV_ONDEMAND=y
           CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y
@@ -149,7 +164,7 @@ jobs:
       - name: Setup Proton Clang (Mirroring Rama's Path)
         working-directory: gki
         run: |
-          # Sabotase folder prebuilts internal Rama agar sistem build dipaksa pakai Proton
+          # Sabotase folder prebuilts internal Rama
           rm -rf prebuilts-master/clang/host/linux-x86/*
           git clone --depth=1 https://github.com/kdrag0n/proton-clang proton-clang
           
@@ -158,7 +173,7 @@ jobs:
           cp -r proton-clang/* prebuilts-master/clang/host/linux-x86/clang-r563880b/
           chmod +x prebuilts-master/clang/host/linux-x86/clang-r563880b/bin/*
 
-      - name: Execute Build (The Atomic Fix)
+      - name: Execute Build (The Atomic Stand)
         working-directory: gki
         run: |
           export PATH="$(pwd)/prebuilts-master/clang/host/linux-x86/clang-r563880b/bin:$PATH"
@@ -168,7 +183,7 @@ jobs:
           sed -i '/CLANG_PREBUILT_BIN/d' common/build.config*
           echo "CLANG_PREBUILT_BIN=prebuilts-master/clang/host/linux-x86/clang-r563880b/bin" >> $CONFIG_FILE
           
-          # FORCE INJECT: Jaring pengaman terakhir agar KPROBES benar-benar masuk di .config akhir
+          # FORCE INJECT: Jaring pengaman terakhir agar KPROBES benar-benar masuk
           echo "" >> $CONFIG_FILE
           echo "update_config() {" >> $CONFIG_FILE
           echo "  scripts/config --file \${OUT_DIR}/\${DEFCONFIG} --enable CONFIG_KPROBES" >> $CONFIG_FILE
@@ -186,7 +201,7 @@ jobs:
           BUILD_CONFIG=$CONFIG_FILE \
           build/build.sh
 
-      - name: Packaging & Release
+      - name: Packaging anykernel & Release
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
@@ -199,4 +214,4 @@ jobs:
           cp "$IMG" anykernel/
           sed -i "s|kernel.string=.*|kernel.string=${FULL_VER} by Zixine|g" anykernel/anykernel.sh
           cd anykernel && zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md && cd ..
-          gh release create "Zixine-${DATE}" "$ZIP_NAME" --repo "zixine/Kernel-GKI-12-5.10-release" --title "Zixine ${DATE}" --notes "Full Restoration Build with Mirroring Path & Sabotage Fix"
+          gh release create "Zixine-${DATE}" "$ZIP_NAME" --repo "zixine/Kernel-GKI-12-5.10-release" --title "Zixine ${DATE}" --notes "Full Restoration Build with Bootloop Fixes & Proton Clang Mirroring"
