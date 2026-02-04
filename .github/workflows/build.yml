@@ -26,8 +26,8 @@ jobs:
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 2048
-          swap-size-mb: 8192
+          root-reserve-mb: 4092
+          swap-size-mb: 10248
 
       - name: Fetch Source Code
         uses: actions/checkout@v4
