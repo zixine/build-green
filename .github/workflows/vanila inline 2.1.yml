@@ -103,9 +103,6 @@ jobs:
           CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
           CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
           CONFIG_ENERGY_MODEL=y
-          CONFIG_KSU_SUSFS_SUS_SU=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
           CONFIG_HZ_300=y
           CONFIG_CPU_FREQ=y
           CONFIG_HIGH_RES_TIMERS=y
@@ -186,7 +183,7 @@ jobs:
           
           # Tambahkan Varian Matrix ke nama file ZIP
           VARIANT="${{ matrix.variant }}"
-          ZIP_NAME="RE-GKI-zixine-elysium-inline-${VARIANT}-${DATE}.zip"
+          ZIP_NAME="RE-GKI-zixine-elysium-inline-vanila${VARIANT}-${DATE}.zip"
           
           AK3_REPO="https://github.com/zixine/anykernel" 
           git clone -q --depth=1 "$AK3_REPO" -b main anykernel
