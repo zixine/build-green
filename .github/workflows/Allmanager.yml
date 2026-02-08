@@ -222,6 +222,25 @@ jobs:
           echo "Starting build with LTO=thin..."
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh -j$(nproc)
 
+      - name: Apply KPM Patch
+        working-directory: gki/out/android12-5.10/dist
+        run: |
+          if [ -f Image ]; then
+            echo "✅ Image found, applying KPM patch..."
+            curl -LSs "https://github.com/Kingfinik98/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
+            chmod 777 patch
+            ./patch
+            if [ -f oImage ]; then
+              mv -f oImage Image
+              ls -lh Image
+            else
+              echo "Error: oImage not found!"
+              exit 1
+            fi
+          else
+            echo "Image file not found. Skipping KPM patch."
+          fi
+          
       # --- PACKAGING & RELEASE ---
       - name: Packaging anykernel & Release
         if: success()
