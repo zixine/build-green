@@ -26,7 +26,7 @@ jobs:
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 8192
-          swap-size-mb: 4096
+          swap-size-mb: 4092
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -44,13 +44,13 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
-      - name: Initialize Repo & Sync
+      - name: Init & Sync GKI
         run: |
-          mkdir -p gki
-          cd gki
-          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10
-          repo sync -c -j$(nproc --all) --no-tags --fail-fast
-
+          mkdir gki && cd gki
+          # Filter grup untuk hemat disk space
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1 --groups=all,-notdefault,-device,-mips,-x86,-darwin
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
+        
       - name: Setup Custom Clang
         working-directory: gki
         run: |
@@ -76,18 +76,46 @@ jobs:
           rm -rf clang-r416183b
           ln -sf $CLANG_VER clang-r416183b
 
-      - name: Setup Upstream & KernelSU-Next
-        working-directory: gki/common
+      - name: Update kernel source for GKI 5.10
         run: |
-          # Upstream to 5.10.247 logic
+          cd gki/common
           git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
           git fetch -j12 rama
-          git checkout -b update-5.10.247 rama/android12-5.10-staging
-          
-          # Setup KernelSU-Next
+          git checkout -b update-android12-5.10-staging rama/android12-5.10-staging
           rm -rf drivers/staging/kernelsu
-          git clone https://github.com/ramabondanp/KernelSU.git -b main drivers/staging/kernelsu
 
+      - name: Apply Snapdragon Performance Patch
+        if: github.event.inputs.performance_patch == 'Snapdragon'
+        working-directory: gki/common
+        run: |
+          echo " [Snapdragon] Applying qcom-cpufreq-hw performance patch (Xiaomi Marble)"
+          TARGET="drivers/cpufreq/qcom-cpufreq-hw.c"
+          SRC_URL="https://raw.githubusercontent.com/Pzqqt/android_kernel_xiaomi_marble/refs/heads/melt-rebase/drivers/cpufreq/qcom-cpufreq-hw.c"
+          if [ ! -f "$TARGET" ]; then
+            echo " Target file not found: $TARGET"
+            exit 1
+          fi
+          curl -L "$SRC_URL" -o /tmp/qcom-cpufreq-hw.c
+          grep -q "qcom_cpufreq_hw" /tmp/qcom-cpufreq-hw.c || exit 1
+          cp /tmp/qcom-cpufreq-hw.c "$TARGET"
+          echo "✅ [Snapdragon] Qualcomm CPUFreq HW performance patch applied."
+          
+
+      - name: Setup ReSukiSU & SUSFS
+        run: |
+          cd gki/common
+          echo "[6/12] Setup ReSukiSU & SUSFS"
+          curl -LSs "https://raw.githubusercontent.com/RapliVx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s susfs-mambo-master
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
+          rm -rf sus/.git
+          susfs=sus/kernel_patches
+          cp -r $susfs/fs .
+          cp -r $susfs/include .
+          cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+          echo "[✓] SUSFS patched"
+          
+          
       - name: Apply Compatibility Patches
         working-directory: gki/common
         run: |
@@ -95,6 +123,8 @@ jobs:
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+          echo "🔧 Patching Kconfig for Stack Protector Control..."
+          sed -i '/config STACKPROTECTOR_PER_TASK/,/def_bool y/ s/def_bool y/bool "Stack Protector per task"\n\tdefault n/' arch/arm64/Kconfig
 
       - name: Configure Defconfig (KSU/SuSFS)
         working-directory: gki/common
@@ -106,7 +136,6 @@ jobs:
           CONFIG_KSU=y
           CONFIG_KPM=n
           CONFIG_KSU_MANUAL_HOOK=y
-          CONFIG_KSU_KPROBES_HOOK=n
           
           # SUSFS Configuration
           CONFIG_KSU_SUSFS=y
@@ -147,23 +176,6 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
-
-      - name: Apply Extra Cherry-Picks
-        working-directory: gki/common
-        run: |
-          echo "Applying requested cherry-picks..."
-          
-          # Patch 1: Common 5.10 update/fix
-          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
-             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
-          }
-
-          # Patch 2: Xiaomi Marble specific fix
-          curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
-             curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | patch -p1
-          }
 
       - name: Final Build Config & Version Fix
         working-directory: gki
@@ -210,6 +222,54 @@ jobs:
           echo "Starting build with LTO=thin..."
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh -j$(nproc)
 
+      # --- PACKAGING & RELEASE ---
+      - name: Packaging anykernel & Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # Ambil Base Version dari Makefile
+          BASE_VER=$(make -s kernelversion -C gki/common | tr -d '\n\r')
+          FULL_VER=$(make -s kernelversion -C gki/common | tr -d '\n\r')
+          DATE=$(date +"%Y%m%d")
+          
+          # Ambil nama dari Input User
+          KNAME="${{ github.event.inputs.kernel_name }}"
+          [ -z "$KNAME" ] && KNAME="Zixine"
+          
+          # Tambahkan Varian Matrix ke nama file ZIP
+          VARIANT="${{ matrix.variant }}"
+          ZIP_NAME="RE-GKI-zixine-elysium-inline-${VARIANT}-${DATE}.zip"
+          
+          AK3_REPO="https://github.com/zixine/anykernel" 
+          git clone -q --depth=1 "$AK3_REPO" -b main anykernel
+          
+          IMG=$(find gki/out -name "Image" -type f | head -n 1)
+          if [ -z "$IMG" ]; then echo "❌ Error: Image not found!"; exit 1; fi
+          
+          cp "$IMG" anykernel/
+          
+          # Set kernel string di anykernel.sh
+          sed -i "s|kernel.string=.*|kernel.string=${FULL_VER} by Zixine|g" anykernel/anykernel.sh
+          
+          cd anykernel
+          chmod +x anykernel.sh tools/magiskboot tools/ak3-core.sh META-INF/com/google/android/update-binary
+          zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md
+          cd ..
+          
+          # Release ke Repo Tujuan
+          TARGET_REPO="zixine/Kernel-GKI-12-5.10-release"
+          RELEASE_TAG="${KNAME}-${DATE}"
+          
+          echo "🚀 Attempting to create or upload to release: $RELEASE_TAG"
+          
+          if ! gh release create "$RELEASE_TAG" "$ZIP_NAME" --repo "$TARGET_REPO" --title "Zixine ${DATE}" --notes "Automated Matrix Build" --prerelease=false 2>/dev/null; then
+            echo "⚠️ Release creation failed (Release might already exist). Attempting to upload to existing release..."
+            gh release upload "$RELEASE_TAG" "$ZIP_NAME" --repo "$TARGET_REPO" --clobber
+          else
+            echo "✅ Release created and asset uploaded successfully."
+          fi
+          
       - name: Upload Image
         uses: actions/upload-artifact@v4
         with:
