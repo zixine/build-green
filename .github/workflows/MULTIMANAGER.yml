@@ -6,7 +6,7 @@ on:
       kernel_name:
         description: 'Nama Kernel (Contoh: Zixine-Elysium)'
         required: true
-        default: 'Zixine-Elysium-inline-1.5'
+        default: 'Zixine-Roki-Private'
         type: string
 
 permissions:
@@ -15,7 +15,7 @@ permissions:
 jobs:
   build-kernel:
     name: Build ${{ matrix.variant }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -35,8 +35,8 @@ jobs:
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 2048
-          swap-size-mb: 8192
+          root-reserve-mb: 4092
+          swap-size-mb: 10482
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -88,25 +88,31 @@ jobs:
         if: matrix.variant == 'MULTIMANAGER'
         working-directory: gki/common
         run: |
-          # 1. Bersihkan & Siapkan Environment
-          rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU KernelSU-Next
-          
-          # 2. Setup KernelSU-Next (Gunakan script resmi agar bersih)
-          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
-          sed -i 's/$(error KSU requires Kprobes; enable it (defconfig))/# $(error KSU requires Kprobes; enable it (defconfig))/' drivers/kernelsu/Kbuild
-            
-          # Apply All Managers Patch
-          echo "🔧 Applying Patch for All Managers Support..."
-          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/gki-builder/refs/heads/6.x/kernel-patches/ksu/ksun-add-more-managers-support.patch" -o /tmp/ksun-add-more-managers-support.patch
-          cd KernelSU-Next && patch -p1 < /tmp/ksun-add-more-managers-support.patch && cd ..
-          echo "✅ All Managers Patch Applied"
-            
-          # Apply SUSFS
+          cd gki/common
+          echo "[6/12] Setup ReSukiSU & SUSFS"
+          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
+          # # Apply All Managers Patch
+          # echo "Applying Patch ksu All Managers Support..."
+          # curl -LSs "https://raw.githubusercontent.com/Kingfinik98/gki-builder/refs/heads/6.x/kernel-patches/ksu/ksu-add-manager.patch" -o /tmp/ksu-add-manager.patch
+          # cd KernelSU && patch -p1 < /tmp/ksu-add-manager.patch && cd ..
+          # echo "All Managers Patch Applied"
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           rm -rf sus/.git
           susfs=sus/kernel_patches
-          cp -r $susfs/fs . && cp -r $susfs/include . && cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
+          cp -r $susfs/fs .
+          cp -r $susfs/include .
+          cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
           patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+          echo "[✓] SUSFS patched"
+
+      - name: Replace 500Hz
+        working-directory: gki/common
+        run: |
+          KCONFIG_HZ="kernel/Kconfig.hz"
+          # add 500hz
+          sed -i 's/config HZ_500/config HZ_500/g' "$KCONFIG_HZ"
+          sed -i 's/bool "500 HZ"/bool "500 HZ"/g' "$KCONFIG_HZ"
+          sed -i 's/default 500 if HZ_500/default 500 if HZ_500/g' "$KCONFIG_HZ"
 
       # --- APPLY CRITICAL FIXES (Anti Reboot) ---
       - name: Apply Critical Fixes
@@ -125,18 +131,7 @@ jobs:
           sed -i 's/check_defconfig//' build.config.gki
           
       - name: Clean Build Config Line
-        run: sed -i '2d' gki/common/build.config.gki
-
-      - name: Fix SUSFS Uname Symbol Error
-        working-directory: gki/common
-        run: |
-          if [ "${{ matrix.variant }}" == "KernelSU-Next" ] || [ "${{ matrix.variant }}" == "KernelSU-Next (All Managers)" ]; then
-            echo "🛠️ Applying fix for undefined SUSFS symbols (KernelSU-Next)..."
-            sed -i 's/#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME/#if 0 \/\* CONFIG_KSU_SUSFS_SPOOF_UNAME Disabled to fix build \*\//' drivers/kernelsu/supercalls.c
-            echo "✅ SUSFS symbol fix applied for KernelSU-Next."
-          else 
-            echo "⏭️ Skipping SUSFS fix (Not needed for ${{ matrix.variant }})"
-          fi
+        run: sed -i '2d' gki/common/build.config.gki 
         
       - name: Configure Kernel
         working-directory: gki/common
@@ -150,7 +145,6 @@ jobs:
           sed -i '/CONFIG_BPF_JIT/d' $TARGET_CONFIG
           sed -i '/CONFIG_KSU/d' $TARGET_CONFIG
           sed -i '/CONFIG_NO_HZ/d' $TARGET_CONFIG
-          sed -i '/CONFIG_PREEMPT/d' $TARGET_CONFIG
           sed -i '/CONFIG_MQ/d' $TARGET_CONFIG
           
           echo "⚙️ Injecting Configuration..."
@@ -189,16 +183,10 @@ jobs:
           CONFIG_BPF_JIT=y
           CONFIG_BPF_JIT_ALWAYS_ON=y
           CONFIG_BPF_JIT_DEFAULT_ON=y
-          CONFIG_PREEMPT=y
-          CONFIG_PREEMPT_COUNT=y
-          CONFIG_PREEMPTION=y
-          CONFIG_HZ_300=y
+          CONFIG_HZ_500=y
           CONFIG_NO_HZ=y
 
           # Base Stability
-          CONFIG_PSI=y
-          CONFIG_MEMCG=y
-          CONFIG_MEMCG_SWAP=y
           CONFIG_LOCALVERSION_AUTO=n
           EOF
 
