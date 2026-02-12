@@ -340,7 +340,7 @@ jobs:
           cd ..
           
           # Release ke Repo Tujuan
-          TARGET_REPO="https://github.com/zixine/Kernel-GKI-12-5.10-release"
+          TARGET_REPO="zixine/Kernel-GKI-12-5.10-release"
           RELEASE_TAG="${KNAME}-${DATE}"
           
           echo "🚀 Attempting to create or upload to release: $RELEASE_TAG"
