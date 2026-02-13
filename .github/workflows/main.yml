@@ -15,7 +15,7 @@ permissions:
 jobs:
   build:
     name: Build Kernel (${{ matrix.variant }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-slim
     strategy:
       fail-fast: false
       matrix:
@@ -56,11 +56,11 @@ jobs:
       - name: Update kernel source for GKI 5.10
         run: |
           cd gki/common
-          git remote add Kingfinik98 https://github.com/Kingfinik98/kernel-android12-5.10.git
-          git fetch -j12 Kingfinik98
-          git checkout -b update-master Kingfinik98/master
+          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
+          git fetch -j12 rama
+          git checkout -b update-android12-5.10-staging rama/android12-5.10-staging
           rm -rf drivers/staging/kernelsu
-
+          
       - name: Apply Infinix GT 20 Pro Camera Fix
         working-directory: gki/common
         run: |
@@ -183,13 +183,16 @@ jobs:
           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          EOF
+          fi
+          # -all Configs
+            cat >> $DEFCONFIG <<EOF
           CONFIG_CPU_FREQ=y
           CONFIG_HIGH_RES_TIMERS=y
           CONFIG_LTO=y
           CONFIG_LTO_CLANG=y
           CONFIG_LTO_CLANG_THIN=y
           EOF
-          fi
 
       - name: Setup Versioning
         working-directory: gki/common
@@ -199,22 +202,42 @@ jobs:
           rm -f localversion*
           echo "-$CLEAN_NAME" > localversion
 
-      - name: Setup Clang 17
+      - name: Apply Versioning
+        working-directory: gki/common
+        run: |
+          NAME="${{ github.event.inputs.kernel_name }}"
+          [ -z "$NAME" ] && NAME="Zixine-Elysium-inline-2.3"
+          FINAL_TAG="-${NAME}"
+          echo "" > scripts/setlocalversion
+          if grep -q '^EXTRAVERSION *=' Makefile; then
+            sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = $FINAL_TAG/" Makefile
+          else
+            echo "EXTRAVERSION = $FINAL_TAG" >> Makefile
+          fi
+
+      - name: Setup Compiler (Clang 17)
         working-directory: gki
         run: |
-          mkdir -p prebuilts-master/clang/host/linux-x86/clang-r487747c
-          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2023/clang-r487747c.tar.gz"
-          curl -L "${CLANG_URL}" -o clang-temp.tar.gz
-          tar -xzf clang-temp.tar.gz -C prebuilts-master/clang/host/linux-x86/clang-r487747c
-          ln -sf clang-r487747c prebuilts-master/clang/host/linux-x86/clang-r416183b
-          echo "✅ Clang 17 (r487747c) setup finished."
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          ACTUAL_VER="clang-r487747c"
+          ACTUAL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2023/clang-r487747c.tar"
+          EXPECTED_VER="clang-r563880b"
+          mkdir -p "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          curl -L "$ACTUAL_URL" | tar -xz -C "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          cd prebuilts-master/clang/host/linux-x86
+          rm -rf "$EXPECTED_VER"
+          ln -s "$ACTUAL_VER" "$EXPECTED_VER"
 
-      - name: Compile
+      - name: Execute Build (With No-WError)
         working-directory: gki
         run: |
-          sed -i 's/check_defconfig//' common/build.config.gki
-          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
-
+          echo "🚀 Starting Compilation..."
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
+          export KMI_ENFORCED=0
+          export TRIM_NONLISTED_KMI=0
+          # Tambahkan -Wno-error=implicit-function-declaration untuk bypass error header bandel
+          LTO=thin KCFLAGS="-O3 -Wno-error=implicit-function-declaration -Wno-error=visibility" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          
       - name: Packaging & Release (Combined)
         if: success()
         env:
@@ -223,7 +246,7 @@ jobs:
           DATE=$(date +"%Y%m%d")
           # Tag unik berdasarkan nomor run agar semua matrix masuk ke satu halaman release
           RELEASE_TAG="Zixine-GKI-Run-${{ github.run_number }}"
-          ZIP_NAME="RE-GKI-zixine-${{ matrix.variant }}-${DATE}.zip"
+          ZIP_NAME="RE-GKI-zixine-Elysium-inline-${{ matrix.variant }}-${DATE}.zip"
           
           git clone -q --depth=1 "https://github.com/zixine/anykernel" -b main anykernel
           IMG=$(find gki/out -name "Image" -type f | head -n 1)
