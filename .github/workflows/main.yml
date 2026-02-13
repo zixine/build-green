@@ -15,7 +15,7 @@ permissions:
 jobs:
   build:
     name: Build Kernel (${{ matrix.variant }})
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
