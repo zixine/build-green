@@ -219,14 +219,14 @@ jobs:
         working-directory: gki
         run: |
           mkdir -p prebuilts-master/clang/host/linux-x86
-          ACTUAL_VER="clang-r487747c"
-          ACTUAL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2023/clang-r487747c.tar"
-          EXPECTED_VER="clang-r563880b"
-          mkdir -p "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
-          curl -L "$ACTUAL_URL" | tar -xz -C "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          # Kita gunakan git clone langsung ke direktori tujuan agar lebih aman dari kerusakan file
+          CLANG_DIR="prebuilts-master/clang/host/linux-x86/clang-r487747c"
+          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b main-kernel-2023 --depth=1 $CLANG_DIR
+          
+          # Membuat symlink agar sesuai dengan ekspektasi build script
           cd prebuilts-master/clang/host/linux-x86
-          rm -rf "$EXPECTED_VER"
-          ln -s "$ACTUAL_VER" "$EXPECTED_VER"
+          ln -s clang-r487747c clang-r563880b
+          echo "✅ Clang setup completed via Git Clone."
 
       - name: Execute Build (With No-WError)
         working-directory: gki
