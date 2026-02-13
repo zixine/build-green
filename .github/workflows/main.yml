@@ -218,15 +218,27 @@ jobs:
       - name: Setup Compiler (Clang 17)
         working-directory: gki
         run: |
+          # Buat struktur folder induk 
           mkdir -p prebuilts-master/clang/host/linux-x86
-          # Kita gunakan git clone langsung ke direktori tujuan agar lebih aman dari kerusakan file
-          CLANG_DIR="prebuilts-master/clang/host/linux-x86/clang-r487747c"
-          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b main-kernel-2023 --depth=1 $CLANG_DIR
-          
-          # Membuat symlink agar sesuai dengan ekspektasi build script
           cd prebuilts-master/clang/host/linux-x86
-          ln -s clang-r487747c clang-r563880b
-          echo "✅ Clang setup completed via Git Clone."
+          
+          # Gunakan git clone ke branch 'main' (standar terbaru Google) 
+          # Kita hanya mengambil folder yang diperlukan untuk menghemat waktu
+          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b main --depth=1 temp_clang
+          
+          # Cari folder clang yang berawalan 'clang-r' yang tersedia di sana
+          ACTUAL_CLANG=$(ls -d temp_clang/clang-r* | head -n 1 | xargs basename)
+          echo "Ditemukan Clang: $ACTUAL_CLANG"
+          
+          # Pindahkan ke nama yang kita inginkan agar folder tetap bersih
+          mv temp_clang/$ACTUAL_CLANG .
+          rm -rf temp_clang
+          
+          # Trik Symlink: Hubungkan folder yang ada ke nama yang diminta skrip build 
+          # Nama yang diminta skrip biasanya: clang-r563880b 
+          ln -s "$ACTUAL_CLANG" "clang-r563880b"
+          
+          echo "✅ Symlink trick berhasil: $ACTUAL_CLANG -> clang-r563880b"
 
       - name: Execute Build (With No-WError)
         working-directory: gki
