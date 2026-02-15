@@ -104,20 +104,8 @@ jobs:
         working-directory: gki/common
         run: |
           echo "🧩 Setup KernelSU-Next & SUSFS (Non-Vanilla)"
-          for KSU_PATH in drivers/staging/kernelsu drivers/kernelsu KernelSU; do
-            if [ -d $KSU_PATH ]; then
-              KSU_DIR=$(dirname "$KSU_PATH")
-              [ -f "$KSU_DIR/Kconfig" ] && sed -i '/kernelsu/d' $KSU_DIR/Kconfig
-              [ -f "$KSU_DIR/Makefile" ] && sed -i '/kernelsu/d' $KSU_DIR/Makefile
-              rm -rf $KSU_PATH
-            fi
-          done
           
-          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
-          sed -i 's/$(error KSU requires Kprobes; enable it (defconfig))/# Kprobes bypass/' drivers/kernelsu/Kbuild
-          
-          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/gki-builder/refs/heads/6.x/kernel-patches/ksu/ksun-add-more-managers-support.patch" -o /tmp/ksun-add-more-managers-support.patch
-          cd KernelSU-Next && patch -p1 < /tmp/ksun-add-more-managers-support.patch && cd ..
+          curl -LSs "https://raw.githubusercontent.com/RapliVx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s susfs-mambo-master
           
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
           cp -r sus/kernel_patches/fs .
