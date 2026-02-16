@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [snapdragon-300hz, snapdragon-500hz, universal-500hz, universal-300hz, vanila]
+        variant: [snapdragon, universal, vanila]
 
     steps:
       - name: Free disk space
@@ -83,18 +83,6 @@ jobs:
             fi
           fi
 
-      - name: Apply HZ Trick (300Hz & 500Hz Support)
-        working-directory: gki/common
-        run: |
-          echo "🛠️ Enabling 300Hz & 500Hz in Kconfig.hz..."
-          KCONFIG_HZ="kernel/Kconfig.hz"
-          # Menambahkan pilihan 300Hz dan 500Hz jika belum ada secara eksplisit
-          if ! grep -q "config HZ_500" "$KCONFIG_HZ"; then
-            sed -i '/config HZ_250/i config HZ_500\n\tbool "500 HZ"\n' "$KCONFIG_HZ"
-            sed -i '/default 250 if HZ_250/i \tdefault 500 if HZ_500' "$KCONFIG_HZ"
-          fi
-          echo "✅ HZ Trick applied."
-
       - name: Tweak build config
         run: |
           sed -i '2d' gki/common/build.config.gki
@@ -130,19 +118,7 @@ jobs:
       - name: Inject Kernel Configs
         working-directory: gki/common
         run: |
-          DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          
-          # HZ Logic based on Matrix (Wajib disuntikkan pertama agar tidak tertimpa)
-          if [[ "${{ matrix.variant }}" == *"300hz"* ]]; then
-            echo "CONFIG_HZ=300" >> $DEFCONFIG
-            echo "CONFIG_HZ_300=y" >> $DEFCONFIG
-            echo "✅ Config HZ 300 injected"
-          elif [[ "${{ matrix.variant }}" == *"500hz"* ]]; then
-            echo "CONFIG_HZ=500" >> $DEFCONFIG
-            echo "CONFIG_HZ_500=y" >> $DEFCONFIG
-            echo "✅ Config HZ 500 injected"
-          fi
-
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"          
           # Non-Vanilla Configs
           if [[ "${{ matrix.variant }}" != "vanila" ]]; then
             cat >> $DEFCONFIG <<EOF
