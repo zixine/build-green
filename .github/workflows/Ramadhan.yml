@@ -93,7 +93,7 @@ jobs:
         run: |
           echo "🧩 Setup KernelSU-Next & SUSFS (Non-Vanilla)"
           
-          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
+          curl -LSs "https://raw.githubusercontent.com/zixine/ZixineSU/refs/heads/master/kernel/setup.sh" | bash -s susfs-mambo-master
           
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
           cp -r sus/kernel_patches/fs .
