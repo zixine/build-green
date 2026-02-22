@@ -15,7 +15,7 @@ permissions:
 jobs:
   build-kernel:
     name: Build ${{ matrix.ksu_variant }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     
     steps:
       - name: Environment Preparation
