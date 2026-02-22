@@ -115,7 +115,6 @@ jobs:
           echo "✅ KernelSU-Next & SUSFS Ready."
 
       - name: Apply common fixes
-        if: matrix.variant != 'vanila'
         working-directory: gki/common
         run: |
           sed -i 's/#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME/#if 0 \/\* Disable spoof uname \*\//' drivers/kernelsu/supercalls.c
@@ -213,7 +212,7 @@ jobs:
             echo "EXTRAVERSION = $FINAL_TAG" >> Makefile
           fi
 
-      - name: Setup Compiler (Clang 17)
+      - name: Setup Compiler (Clang latest)
         working-directory: gki
         run: |
           # Buat struktur folder induk 
