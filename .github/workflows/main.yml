@@ -1,11 +1,11 @@
-name: Next Al Manager2 Matrix (Final)
+name: Matrix Kernel Builder (Multi-Method)
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Nama Kernel (Contoh: Zixine)'
-        required: false
+        description: 'Nama Kernel (Akan menjadi nama final, misal: Zixine-V1)'
+        required: true
         default: 'Zixine'
         type: string
 
@@ -13,35 +13,31 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build Kernel (${{ matrix.variant }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [snapdragon-300hz, universal-300hz]
-
+  build-kernel:
+    name: Build ${{ matrix.ksu_variant }}
+    runs-on: ubuntu-22.04
+    
     steps:
-      - name: Free disk space
+      - name: Environment Preparation
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 8192
-          swap-size-mb: 4092
+          swap-size-mb: 10240
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
-          remove-docker-images: 'false'
+          remove-docker-images: 'true'
 
-      - name: Checkout Repository
+      - name: Fetch Source Code
         uses: actions/checkout@v4
 
-      - name: Configure Git
+      - name: Initialize Git Identity
         run: |
           git config --global user.name "zixine"
           git config --global user.email "waheid005@gmail.com"
 
-      - name: Install build tools
+      - name: Dependency Installation
         run: |
           sudo apt update && sudo apt upgrade -y
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
@@ -67,21 +63,6 @@ jobs:
           echo "📸 Applying Infinix GT 20 Pro Camera Fix..."
           curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" -o infinix_cam.patch
           patch -p1 < infinix_cam.patch || echo "Patch already applied."
-          
-      - name: Apply Snapdragon Performance Patch
-        if: contains(matrix.variant, 'snapdragon')
-        working-directory: gki/common
-        run: |
-          echo "🚀 [Snapdragon] Applying performance patch..."
-          TARGET="drivers/cpufreq/qcom-cpufreq-hw.c"
-          SRC_URL="https://raw.githubusercontent.com/Pzqqt/android_kernel_xiaomi_marble/refs/heads/melt-rebase/drivers/cpufreq/qcom-cpufreq-hw.c"
-          if [ -f "$TARGET" ]; then
-            curl -L "$SRC_URL" -o /tmp/qcom-cpufreq-hw.c
-            if grep -q "qcom_cpufreq_hw" /tmp/qcom-cpufreq-hw.c; then
-              cp /tmp/qcom-cpufreq-hw.c "$TARGET"
-              echo "✅ Patch Qualcomm CPUFreq HW applied."
-            fi
-          fi
 
       - name: Tweak build config
         run: |
