@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-kernel:
-    name: Build gki
+    name: Build gkii
     runs-on: ubuntu-latest
     
     steps:
