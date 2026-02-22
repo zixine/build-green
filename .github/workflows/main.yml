@@ -167,7 +167,7 @@ jobs:
         working-directory: gki/common
         run: |
           NAME="${{ github.event.inputs.kernel_name }}"
-          [ -z "$NAME" ] && NAME="Zixine-Elysium-inline-2.3"
+          [ -z "$NAME" ] && NAME="Zixine-Elysium-inline-2.63"
           FINAL_TAG="-${NAME}"
           echo "" > scripts/setlocalversion
           if grep -q '^EXTRAVERSION *=' Makefile; then
@@ -176,28 +176,18 @@ jobs:
             echo "EXTRAVERSION = $FINAL_TAG" >> Makefile
           fi
 
-      - name: Setup Compiler (Clang latest)
+      - name: Setup Compiler (Clang 12)
         working-directory: gki
         run: |
-          # Buat struktur folder induk 
           mkdir -p prebuilts-master/clang/host/linux-x86
+          ACTUAL_VER="clang-r416183b"
+          ACTUAL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2021/clang-r416183b.tar.gz"
+          EXPECTED_VER="clang-r563880b"
+          mkdir -p "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          curl -L "$ACTUAL_URL" | tar -xz -C "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
           cd prebuilts-master/clang/host/linux-x86
-          
-          # Gunakan git clone ke branch 'main' (standar terbaru Google) 
-          # Kita hanya mengambil folder yang diperlukan untuk menghemat waktu
-          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b main --depth=1 temp_clang
-          
-          # Cari folder clang yang berawalan 'clang-r' yang tersedia di sana
-          ACTUAL_CLANG=$(ls -d temp_clang/clang-r* | head -n 1 | xargs basename)
-          echo "Ditemukan Clang: $ACTUAL_CLANG"
-          
-          # Pindahkan ke nama yang kita inginkan agar folder tetap bersih
-          mv temp_clang/$ACTUAL_CLANG .
-          rm -rf temp_clang
-          
-          # Trik Symlink: Hubungkan folder yang ada ke nama yang diminta skrip build 
-          # Nama yang diminta skrip biasanya: clang-r563880b 
-          ln -s "$ACTUAL_CLANG" "clang-r563880b"
+          rm -rf "$EXPECTED_VER"
+          ln -s "$ACTUAL_VER" "$EXPECTED_VER"
           
           echo "✅ Symlink trick berhasil: $ACTUAL_CLANG -> clang-r563880b"
 
