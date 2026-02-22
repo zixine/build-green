@@ -129,7 +129,6 @@ jobs:
           fi
 
           # Non-Vanilla Configs
-          if [[ "${{ matrix.variant }}" != "vanila" ]]; then
             cat >> $DEFCONFIG <<EOF
           CONFIG_KSU=y
           CONFIG_KPM=y
