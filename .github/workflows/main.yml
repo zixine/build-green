@@ -90,8 +90,8 @@ jobs:
           KCONFIG_HZ="kernel/Kconfig.hz"
           # Menambahkan pilihan 300Hz dan 500Hz jika belum ada secara eksplisit
           if ! grep -q "config HZ_500" "$KCONFIG_HZ"; then
-            sed -i '/config HZ_250/i config HZ_500\n\tbool "500 HZ"\n' "$KCONFIG_HZ"
-            sed -i '/default 250 if HZ_250/i \tdefault 500 if HZ_500' "$KCONFIG_HZ"
+            sed -i '/config HZ_300/i config HZ_500\n\tbool "500 HZ"\n' "$KCONFIG_HZ"
+            sed -i '/default 300 if HZ_250/i \tdefault 500 if HZ_500' "$KCONFIG_HZ"
           fi
           echo "✅ HZ Trick applied."
 
