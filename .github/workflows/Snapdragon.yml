@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-kernel:
-    name: Build ${{ matrix.ksu_variant }}
+    name: Build Snapdragon
     runs-on: ubuntu-latest
     
     steps:
