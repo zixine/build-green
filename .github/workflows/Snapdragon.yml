@@ -1,0 +1,251 @@
+name: Matrix Kernel Builder (Multi-Method)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Nama Kernel (Akan menjadi nama final, misal: Zixine-V1)'
+        required: true
+        default: 'Zixine'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-kernel:
+    name: Build ${{ matrix.ksu_variant }}
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Environment Preparation
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Fetch Source Code
+        uses: actions/checkout@v4
+
+      - name: Initialize Git Identity
+        run: |
+          git config --global user.name "zixine"
+          git config --global user.email "waheid005@gmail.com"
+
+      - name: Dependency Installation
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
+
+      - name: Init & Sync GKI
+        run: |
+          mkdir gki && cd gki
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
+
+      - name: Update kernel source for GKI 5.10
+        run: |
+          cd gki/common
+          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
+          git fetch -j12 rama
+          git checkout -b update-android12-5.10-staging rama/android12-5.10-staging
+          rm -rf drivers/staging/kernelsu
+          
+      - name: Apply Infinix GT 20 Pro Camera Fix
+        working-directory: gki/common
+        run: |
+          echo "📸 Applying Infinix GT 20 Pro Camera Fix..."
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" -o infinix_cam.patch
+          patch -p1 < infinix_cam.patch || echo "Patch already applied."
+
+      - name: Apply Snapdragon Performance Patch
+        if: contains(matrix.variant, 'snapdragon')
+        working-directory: gki/common
+        run: |
+          echo "🚀 [Snapdragon] Applying performance patch..."
+          TARGET="drivers/cpufreq/qcom-cpufreq-hw.c"
+          SRC_URL="https://raw.githubusercontent.com/Pzqqt/android_kernel_xiaomi_marble/refs/heads/melt-rebase/drivers/cpufreq/qcom-cpufreq-hw.c"
+          if [ -f "$TARGET" ]; then
+            curl -L "$SRC_URL" -o /tmp/qcom-cpufreq-hw.c
+            if grep -q "qcom_cpufreq_hw" /tmp/qcom-cpufreq-hw.c; then
+              cp /tmp/qcom-cpufreq-hw.c "$TARGET"
+              echo "✅ Patch Qualcomm CPUFreq HW applied."
+            fi
+          fi
+
+      - name: Tweak build config
+        run: |
+          sed -i '2d' gki/common/build.config.gki
+
+      - name: Setup KernelSU-Next & SUSFS Hook
+        if: matrix.variant != 'vanila'
+        working-directory: gki/common
+        run: |
+          echo "🧩 Setup KernelSU-Next & SUSFS (Non-Vanilla)"
+          
+          curl -LSs "https://raw.githubusercontent.com/zixine/ZixineSu/refs/heads/master/kernel/setup.sh" | bash -s susfs-mambo-master
+          
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
+          cp -r sus/kernel_patches/fs .
+          cp -r sus/kernel_patches/include .
+          patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
+          sed -i '1i#include <linux/stat.h>' include/linux/susfs.h
+          echo "✅ KernelSU-Next & SUSFS Ready."
+
+      - name: Apply common fixes
+        working-directory: gki/common
+        run: |
+          sed -i 's/#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME/#if 0 \/\* Disable spoof uname \*\//' drivers/kernelsu/supercalls.c
+          sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
+          echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
+
+      - name: Xiaomi Compatibility Patch
+        working-directory: gki/common
+        run: |
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+
+      - name: Inject Kernel Configs
+        working-directory: gki/common
+        run: |
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          
+          # HZ Logic based on Matrix (Wajib disuntikkan pertama agar tidak tertimpa)
+          if [[ "${{ matrix.variant }}" == *"300hz"* ]]; then
+            echo "CONFIG_HZ=300" >> $DEFCONFIG
+            echo "CONFIG_HZ_300=y" >> $DEFCONFIG
+            echo "✅ Config HZ 300 injected"
+          fi
+
+          # Non-Vanilla Configs
+            cat >> $DEFCONFIG <<EOF
+          CONFIG_KSU=y
+          CONFIG_KPM=y
+          CONFIG_KSU_SUSFS_SUS_SU=y
+          CONFIG_KSU_SYSCALL_HOOK=y
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          EOF
+          fi
+          # -all Configs
+            cat >> $DEFCONFIG <<EOF
+          CONFIG_CPU_FREQ=y
+          CONFIG_HIGH_RES_TIMERS=y
+          CONFIG_LTO=y
+          CONFIG_LTO_CLANG=y
+          CONFIG_LTO_CLANG_THIN=y
+          CONFIG_NO_HZ_COMMON=y
+          # CONFIG_HZ_PERIODIC is not set
+          CONFIG_NO_HZ_IDLE=y
+          # CONFIG_NO_HZ_FULL is not set
+          CONFIG_NO_HZ=y
+          CONFIG_RCU_FAST_NO_HZ=y
+          # CONFIG_HZ_100 is not set
+          # CONFIG_HZ_250 is not set
+          # CONFIG_HZ_1000 is not set
+          CONFIG_NO_HZ_COMMON=y  
+          EOF
+
+      - name: Setup Versioning
+        working-directory: gki/common
+        run: |
+          RAW_NAME="${{ github.event.inputs.kernel_name }}-${{ matrix.variant }}"
+          CLEAN_NAME=$(echo $RAW_NAME | tr -d '[:space:]')
+          rm -f localversion*
+          echo "-$CLEAN_NAME" > localversion
+
+      - name: Apply Versioning
+        working-directory: gki/common
+        run: |
+          NAME="${{ github.event.inputs.kernel_name }}"
+          [ -z "$NAME" ] && NAME="Zixine-Elysium-inline-2.63"
+          FINAL_TAG="-${NAME}"
+          echo "" > scripts/setlocalversion
+          if grep -q '^EXTRAVERSION *=' Makefile; then
+            sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = $FINAL_TAG/" Makefile
+          else
+            echo "EXTRAVERSION = $FINAL_TAG" >> Makefile
+          fi
+
+      - name: Setup Compiler (Clang 12)
+        working-directory: gki
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          ACTUAL_VER="clang-r416183b"
+          ACTUAL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2021/clang-r416183b.tar.gz"
+          EXPECTED_VER="clang-r563880b"
+          mkdir -p "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          curl -L "$ACTUAL_URL" | tar -xz -C "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          cd prebuilts-master/clang/host/linux-x86
+          rm -rf "$EXPECTED_VER"
+          ln -s "$ACTUAL_VER" "$EXPECTED_VER"
+          
+          echo "✅ Symlink trick berhasil: $ACTUAL_CLANG -> clang-r563880b"
+
+      - name: Execute Build (With No-WError)
+        working-directory: gki
+        run: |
+          echo "🚀 Starting Compilation..."
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
+          export KMI_ENFORCED=0
+          export TRIM_NONLISTED_KMI=0
+          # Tambahkan -Wno-error=implicit-function-declaration untuk bypass error header bandel
+          LTO=thin KCFLAGS="-O3 -Wno-error=implicit-function-declaration -Wno-error=visibility" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          
+      - name: Packaging & Release (Combined)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          DATE=$(date +"%Y%m%d")
+          # Tag unik berdasarkan nomor run agar semua matrix masuk ke satu halaman release
+          RELEASE_TAG="Zixine-GKI-Run-${{ github.run_number }}"
+          ZIP_NAME="RE-GKI-zixine-Elysium-inline-snapdragon-${{ matrix.variant }}-${DATE}.zip"
+          
+          git clone -q --depth=1 "https://github.com/zixine/anykernel" -b main anykernel
+          IMG=$(find gki/out -name "Image" -type f | head -n 1)
+          cp "$IMG" anykernel/
+          
+          FULL_VER=$(make -s kernelversion -C gki/common | tr -d '\n\r')
+          sed -i "s|kernel.string=.*|kernel.string=${FULL_VER} (${{ matrix.variant }})|g" anykernel/anykernel.sh
+          
+          cd anykernel
+          zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md
+          cd ..
+          
+          TARGET_REPO="zixine/Kernel-GKI-12-5.10-release"
+          
+          echo "🚀 Mengunggah $ZIP_NAME ke $TARGET_REPO..."
+          gh release create "$RELEASE_TAG" --repo "$TARGET_REPO" --title "Zixine GKI Matrix Build ${DATE}" --notes "Varian Vanilla tidak menggunakan KSU/SUSFS. Varian lainnya menggunakan KSU-Next & SUSFS." --prerelease=false 2>/dev/null || true
+          gh release upload "$RELEASE_TAG" "$ZIP_NAME" --repo "$TARGET_REPO" --clobber
+
+      - name: Archive Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.variant }}
+          path: gki/out/android12-5.10/common/build.log
