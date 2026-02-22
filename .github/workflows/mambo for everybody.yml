@@ -154,6 +154,18 @@ jobs:
           CONFIG_LTO=y
           CONFIG_LTO_CLANG=y
           CONFIG_LTO_CLANG_THIN=y
+          CONFIG_NO_HZ_COMMON=y
+          # CONFIG_HZ_PERIODIC is not set
+          CONFIG_NO_HZ_IDLE=y
+          # CONFIG_NO_HZ_FULL is not set
+          CONFIG_NO_HZ=y
+          CONFIG_RCU_FAST_NO_HZ=y
+          # CONFIG_HZ_100 is not set
+          # CONFIG_HZ_250 is not set
+          CONFIG_HZ_300=y
+          # CONFIG_HZ_1000 is not set
+          CONFIG_NO_HZ_COMMON=y
+          CONFIG_HZ=300
           EOF
 
       - name: Setup Versioning
