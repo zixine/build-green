@@ -116,14 +116,6 @@ jobs:
         working-directory: gki/common
         run: |
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          
-          # HZ Logic based on Matrix (Wajib disuntikkan pertama agar tidak tertimpa)
-          if [[ "${{ matrix.variant }}" == *"300hz"* ]]; then
-            echo "CONFIG_HZ=300" >> $DEFCONFIG
-            echo "CONFIG_HZ_300=y" >> $DEFCONFIG
-            echo "✅ Config HZ 300 injected"
-          fi
-
           # Non-Vanilla Configs
             cat >> $DEFCONFIG <<EOF
           CONFIG_KSU=y
@@ -165,6 +157,7 @@ jobs:
           CONFIG_NO_HZ=y
           CONFIG_RCU_FAST_NO_HZ=y
           # CONFIG_HZ_100 is not set
+          CONFIG_HZ_300=y
           # CONFIG_HZ_250 is not set
           # CONFIG_HZ_1000 is not set
           CONFIG_NO_HZ_COMMON=y  
