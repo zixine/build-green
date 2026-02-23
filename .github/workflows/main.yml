@@ -75,6 +75,20 @@ jobs:
           curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" -o infinix_cam.patch
           patch -p1 < infinix_cam.patch || echo "Patch already applied."
 
+      - name: Apply Snapdragon Performance Patch
+        working-directory: gki/common
+        run: |
+          echo "🚀 [Snapdragon] Applying performance patch..."
+          TARGET="drivers/cpufreq/qcom-cpufreq-hw.c"
+          SRC_URL="https://raw.githubusercontent.com/Pzqqt/android_kernel_xiaomi_marble/refs/heads/melt-rebase/drivers/cpufreq/qcom-cpufreq-hw.c"
+          if [ -f "$TARGET" ]; then
+            curl -L "$SRC_URL" -o /tmp/qcom-cpufreq-hw.c
+            if grep -q "qcom_cpufreq_hw" /tmp/qcom-cpufreq-hw.c; then
+              cp /tmp/qcom-cpufreq-hw.c "$TARGET"
+              echo "✅ Patch Qualcomm CPUFreq HW applied."
+            fi
+          fi
+
       - name: Tweak build config
         run: |
           sed -i '2d' gki/common/build.config.gki
