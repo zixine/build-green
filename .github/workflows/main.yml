@@ -39,14 +39,15 @@ jobs:
 
       - name: Aggressive Cleanup
         run: |
-         sudo rm -rf /usr/share/dotnet
-         sudo rm -rf /usr/local/lib/android
-         sudo rm -rf /opt/ghc
-         sudo rm -rf "/usr/local/share/boost"
-         sudo rm -rf /usr/local/share/powershell
-         sudo rm -rf /usr/local/lib/node_modules
-         sudo rm -rf /usr/share/swift
-         sudo apt-get quick-clean
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/node_modules
+          sudo rm -rf /usr/share/swift
+          sudo apt-get autoremove -y
+          sudo apt-get clean
 
       - name: Dependency Installation
         run: |
@@ -150,7 +151,7 @@ jobs:
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           EOF
-          fi
+          
           # -all Configs
             cat >> $DEFCONFIG <<EOF
           CONFIG_CPU_FREQ=y
@@ -173,7 +174,7 @@ jobs:
       - name: Setup Versioning
         working-directory: gki/common
         run: |
-          RAW_NAME="${{ github.event.inputs.kernel_name }}-${{ matrix.variant }}"
+          RAW_NAME="${{ github.event.inputs.kernel_name }}"
           CLEAN_NAME=$(echo $RAW_NAME | tr -d '[:space:]')
           rm -f localversion*
           echo "-$CLEAN_NAME" > localversion
@@ -224,14 +225,14 @@ jobs:
           DATE=$(date +"%Y%m%d")
           # Tag unik berdasarkan nomor run agar semua matrix masuk ke satu halaman release
           RELEASE_TAG="Zixine-GKI-Run-${{ github.run_number }}"
-          ZIP_NAME="RE-GKI-zixine-Elysium-inline-${{ matrix.variant }}-${DATE}.zip"
+          ZIP_NAME="RE-GKI-zixine-Elysium-inline-${DATE}.zip"
           
           git clone -q --depth=1 "https://github.com/zixine/anykernel" -b main anykernel
           IMG=$(find gki/out -name "Image" -type f | head -n 1)
           cp "$IMG" anykernel/
           
           FULL_VER=$(make -s kernelversion -C gki/common | tr -d '\n\r')
-          sed -i "s|kernel.string=.*|kernel.string=${FULL_VER} (${{ matrix.variant }})|g" anykernel/anykernel.sh
+          sed -i "s|kernel.string=.*|kernel.string=${FULL_VER} |g" anykernel/anykernel.sh
           
           cd anykernel
           zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md
@@ -240,7 +241,7 @@ jobs:
           TARGET_REPO="zixine/Kernel-GKI-12-5.10-release"
           
           echo "🚀 Mengunggah $ZIP_NAME ke $TARGET_REPO..."
-          gh release create "$RELEASE_TAG" --repo "$TARGET_REPO" --title "Zixine GKI Matrix Build ${DATE}" --notes "Varian Vanilla tidak menggunakan KSU/SUSFS. Varian lainnya menggunakan KSU-Next & SUSFS." --prerelease=false 2>/dev/null || true
+          gh release create "$RELEASE_TAG" --repo "$TARGET_REPO" --title "ZixineSu add Build ${DATE}" --notes "p." --prerelease=false 2>/dev/null || true
           gh release upload "$RELEASE_TAG" "$ZIP_NAME" --repo "$TARGET_REPO" --clobber
 
       - name: Archive Build Log
