@@ -84,7 +84,6 @@ jobs:
       - name: Apply common fixes
         working-directory: gki/common
         run: |
-          sed -i 's/#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME/#if 0 \/\* Disable spoof uname \*\//' drivers/kernelsu/supercalls.c
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
           echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
 
