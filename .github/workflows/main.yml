@@ -110,7 +110,7 @@ jobs:
         run: |
           DEFCONFIG="arch/arm64/configs/gki_defconfig"  
 
-          # Non-Vanilla Configs
+          # Configs
             cat >> $DEFCONFIG <<EOF
           CONFIG_KSU=y
           CONFIG_KPM=y
