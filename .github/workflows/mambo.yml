@@ -1,0 +1,267 @@
+name: zixine Kernel Builder (MamboSU RapliVx - V12 Fixed)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Nama Kernel (Final)'
+        required: true
+        default: 'Zixine'
+        type: string
+      release_status:
+        description: 'Status Rilis'
+        required: true
+        type: choice
+        default: 'RELEASE'
+        options:
+          - 'RELEASE'
+          - 'BETA'
+      force_clean:
+        description: 'Paksa Download Ulang (Reset Cache)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  mambo-build:
+    name: Build MamboSU (Cached)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Environment Preparation
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Fetch Workflow Source
+        uses: actions/checkout@v4
+
+      - name: Initialize Git Identity
+        run: |
+          git config --global user.name "zixine-bot"
+          git config --global user.email "bot@zixine.org"
+
+      - name: Dependency Installation
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
+
+      # --- CACHE KERNEL SOURCE ---
+      - name: Cache Kernel Source
+        id: cache-source
+        if: ${{ !inputs.force_clean }}
+        uses: actions/cache@v4
+        with:
+          path: gki
+          key: kernel-source-android12-5.10-v1
+
+      # --- INIT & SYNC ---
+      - name: Init & Sync GKI (Download)
+        if: steps.cache-source.outputs.cache-hit != 'true'
+        run: |
+          echo "⬇️ Cache miss or forced clean. Downloading Kernel Source..."
+          mkdir -p gki && cd gki
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
+
+      # --- CLEANUP ---
+      - name: Clean Source (Reset)
+        if: steps.cache-source.outputs.cache-hit == 'true'
+        working-directory: gki/common
+        run: |
+          echo "♻️ Cleaning source..."
+          git reset --hard
+          git clean -fdx
+          rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU
+          rm -f .config arch/arm64/configs/gki_defconfig_old
+          make mrproper
+
+      # --- CACHE CLANG ---
+      - name: Cache Clang Toolchain
+        id: cache-clang
+        if: ${{ !inputs.force_clean }}
+        uses: actions/cache@v4
+        with:
+          path: gki/prebuilts-master/clang/host/linux-x86
+          key: clang-12-r416183b
+
+      # --- SETUP COMPILER ---
+      - name: Setup Compiler (Clang 12)
+        if: steps.cache-clang.outputs.cache-hit != 'true'
+        working-directory: gki
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          ACTUAL_VER="clang-r416183b"
+          ACTUAL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2021/clang-r416183b.tar.gz"
+          mkdir -p "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          curl -L "$ACTUAL_URL" | tar -xz -C "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+
+      - name: Link Compiler
+        working-directory: gki
+        run: |
+          ACTUAL_VER="clang-r416183b"
+          EXPECTED_VER="clang-r563880b"
+          cd prebuilts-master/clang/host/linux-x86
+          rm -rf "$EXPECTED_VER"
+          ln -s "$ACTUAL_VER" "$EXPECTED_VER"
+
+      # --- CORE PATCHING ---
+      - name: Update Kernel Branch
+        run: |
+          cd gki/common
+          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
+          git fetch -j12 rama
+          git checkout -b update-android12-5.10-staging rama/android12-5.10-staging || git checkout update-android12-5.10-staging
+          rm -rf drivers/staging/kernelsu
+
+      - name: Apply Infinix GT 20 Pro Camera Fix
+        working-directory: gki/common
+        run: |
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" -o infinix_cam.patch
+          patch -p1 < infinix_cam.patch || echo "✅ Patch kamera sudah tertanam (SKIP)."
+
+      - name: Setup MamboSU (RapliVx)
+        working-directory: gki/common
+        run: |
+          rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU
+          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/VortexSU/refs/heads/main/kernel/setup.sh" | bash -s main
+
+      # --- SETUP SUSFS & FIX (Logic Fix V12) ---
+      - name: Setup SuSFS & Fix Code Logic
+        working-directory: gki/common
+        run: |
+         # Setup SuSFS (Disamakan dengan Suki)
+            echo "Setup SuSFS for Mambo (Suki Method)..."
+            git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
+            rm -rf sus/.git
+            susfs=sus/kernel_patches
+            cp -r $susfs/fs .
+            cp -r $susfs/include .
+            cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
+            patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+            echo "[✓] SUSFS patched"
+          
+          # 5. Copy implementasi SuSFS
+          cp -r susfs-git/kernel_patches/fs/* fs/
+
+      - name: Clean Build Config
+        run: sed -i '2d' gki/common/build.config.gki
+
+      - name: Apply Critical Fixes
+        working-directory: gki/common
+        run: |
+          [ -f fs/read_write.c ] && sed -i '/ksu_init_rc_hook/d' fs/read_write.c
+          [ -f fs/stat.c ] && sed -i '/ksu_handle_/d' fs/stat.c
+          
+          sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+
+      - name: Configure Kernel
+        working-directory: gki/common
+        run: |
+          TARGET_CONFIG="arch/arm64/configs/gki_defconfig"
+          cat >> $TARGET_CONFIG <<EOF
+          CONFIG_KSU=y
+          CONFIG_KPM=n
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_KPROBES_HOOK=n
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=n
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_SU=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
+          CONFIG_HZ_300=y
+          CONFIG_HZ=300
+          CONFIG_NO_HZ=y
+          CONFIG_FS_ENCRYPTION=y
+          CONFIG_FS_VERITY=y
+          CONFIG_PM_AUTOSLEEP=y
+          CONFIG_PM_WAKELOCKS=y
+          CONFIG_LOCALVERSION_AUTO=n
+          EOF
+
+      - name: Apply Versioning
+        working-directory: gki/common
+        run: |
+          NAME="${{ github.event.inputs.kernel_name }}"
+          [ -z "$NAME" ] && NAME="Zixine"
+          FINAL_TAG="-${NAME}"
+          echo "" > scripts/setlocalversion
+          if grep -q '^EXTRAVERSION *=' Makefile; then
+            sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = $FINAL_TAG/" Makefile
+          else
+            echo "EXTRAVERSION = $FINAL_TAG" >> Makefile
+          fi
+
+      - name: Execute Build (With No-WError)
+        working-directory: gki
+        run: |
+          echo "🚀 Starting Compilation..."
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
+          export KMI_ENFORCED=0
+          export TRIM_NONLISTED_KMI=0
+          # Tambahkan -Wno-error=implicit-function-declaration untuk bypass error header bandel
+          LTO=thin KCFLAGS="-O3 -Wno-error=implicit-function-declaration -Wno-error=visibility" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+      - name: Packaging & Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          BASE_VER=$(make -s kernelversion -C gki/common | tr -d '\n\r')
+          FULL_VER=$(make -s kernelversion -C gki/common | tr -d '\n\r')
+          DATE=$(date +"%Y%m%d")
+          KNAME="${{ github.event.inputs.kernel_name }}"
+          [ -z "$KNAME" ] && KNAME="Zixine"
+          ZIP_NAME="AK3-${KNAME}-${DATE}-${BASE_VER}-600Hz.zip"
+          AK3_REPO="https://github.com/zixine/anykernel" 
+          git clone -q --depth=1 "$AK3_REPO" -b main anykernel
+          IMG=$(find gki/out -name "Image" -type f | head -n 1)
+          if [ -z "$IMG" ]; then echo "❌ Error: Image not found!"; exit 1; fi
+          cp "$IMG" anykernel/
+          sed -i "s|kernel.string=.*|kernel.string=${FULL_VER} by Zixine|g" anykernel/anykernel.sh
+          cd anykernel
+          chmod +x anykernel.sh tools/magiskboot tools/ak3-core.sh META-INF/com/google/android/update-binary
+          zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md
+          cd ..
+          TARGET_REPO="zixine/Kernel-GKI-12-5.10-release"
+          RELEASE_TAG="${KNAME}-${DATE}-Mambo"
+          if gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ZIP_NAME" --repo "$TARGET_REPO" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$ZIP_NAME" --repo "$TARGET_REPO" --title "Zixine MamboSU ${DATE}" --notes "Automated Build" --prerelease=false
+          fi
+
+      - name: Archive Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-mambo
+          path: gki/out/android12-5.10/common/build.log
+          if-no-files-found: warn
