@@ -56,46 +56,14 @@ jobs:
           rm -rf drivers/staging/kernelsu
           rm -rf drivers/kernelsu
           
-          echo "🛡️ Injecting Zixine KernelSU via setup.sh..."
-          curl -LSs "https://raw.githubusercontent.com/zixine/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s susfs-mambo-master
-
-      - name: Setup SuSFS
-        working-directory: gki/common
-        run: |
-          echo "🛡️ Installing SuSFS..."
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs-git
-          
-          # 1. Copy file fs/ dan include/ DULUAN
-          cp -r susfs-git/kernel_patches/include/* include/
-          cp -r susfs-git/kernel_patches/fs/* fs/
-          
-          # 2. Force Copy Header SuSFS ke include/linux (Jaga-jaga)
-          cp -rf susfs-git/kernel_patches/include/linux/susfs.h include/linux/
-          
-          # 3. Apply Patch Kernel (Biarkan fail kalau conflict)
-          cp susfs-git/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || true
-          
-          # --- CRITICAL FIX: INJECT INCLUDE SUSFS.H ---
-          # Ini memperbaiki error 'implicit declaration' di supercalls.c
-          echo "💉 Injecting #include <linux/susfs.h> into supercalls.c..."
-          
-          target_file="drivers/kernelsu/supercalls.c"
-          if [ ! -f "$target_file" ]; then
-              target_file="drivers/staging/kernelsu/supercalls.c"
-          fi
-          
-          if [ -f "$target_file" ]; then
-              if ! grep -q "linux/susfs.h" "$target_file"; then
-                  sed -i '1i #include <linux/susfs.h>' "$target_file"
-                  echo "✅ Header injected successfully."
-              else
-                  echo "✅ Header already present."
-              fi
-          else
-              echo "⚠️ Warning: supercalls.c not found in any KSU directory!"
-          fi
-
+          echo "➡️ add Wild_KSU"
+            curl -LSs "https://raw.githubusercontent.com/zixine/VortexSU/refs/heads/main/kernel/setup.sh" | bash -s main
+            git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
+            rm -rf sus/.git
+            susfs=sus/kernel_patches
+            cp -r $susfs/fs . && cp -r $susfs/include . && cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
+            patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+            
       - name: Apply Critical Fixes (KSU + Xiaomi + Bootloop)
         working-directory: gki/common
         run: |
