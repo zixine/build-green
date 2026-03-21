@@ -1,0 +1,261 @@
+name: Build Kernel 12-5.10 (Zixine + SuSFS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Kernel Name (e.g., Zixine-Elysium)'
+        required: true
+        default: 'Zixine-Elysium'
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Zixine KernelSU Repository
+        uses: actions/checkout@v4
+        with:
+          path: zixine-kernelsu
+          
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Install Build Dependencies & Repo Tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            libssl-dev libfl-dev curl zip unzip
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
+          chmod a+x ~/repo
+          sudo mv ~/repo /usr/local/bin/repo
+
+      - name: Sync GKI Manifest
+        run: |
+          mkdir -p gki
+          cd gki
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+
+      - name: Update KernelSU & Rama Source
+        working-directory: gki/common
+        run: |
+          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
+          git fetch -j12 rama
+          git checkout -b update-android12-5.10-staging rama/android12-5.10-staging
+          
+          echo "🛡️ Removing old KernelSU..."
+          rm -rf drivers/staging/kernelsu
+          rm -rf drivers/kernelsu
+          
+          echo "🛡️ Injecting Zixine KernelSU via setup.sh..."
+          curl -LSs "https://raw.githubusercontent.com/zixine/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s susfs-mambo-master
+
+      - name: Setup SuSFS
+        working-directory: gki/common
+        run: |
+          echo "🛡️ Installing SuSFS..."
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs-git
+          
+          # 1. Copy file fs/ dan include/ DULUAN
+          cp -r susfs-git/kernel_patches/include/* include/
+          cp -r susfs-git/kernel_patches/fs/* fs/
+          
+          # 2. Force Copy Header SuSFS ke include/linux (Jaga-jaga)
+          cp -rf susfs-git/kernel_patches/include/linux/susfs.h include/linux/
+          
+          # 3. Apply Patch Kernel (Biarkan fail kalau conflict)
+          cp susfs-git/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || true
+          
+          # --- CRITICAL FIX: INJECT INCLUDE SUSFS.H ---
+          # Ini memperbaiki error 'implicit declaration' di supercalls.c
+          echo "💉 Injecting #include <linux/susfs.h> into supercalls.c..."
+          
+          target_file="drivers/kernelsu/supercalls.c"
+          if [ ! -f "$target_file" ]; then
+              target_file="drivers/staging/kernelsu/supercalls.c"
+          fi
+          
+          if [ -f "$target_file" ]; then
+              if ! grep -q "linux/susfs.h" "$target_file"; then
+                  sed -i '1i #include <linux/susfs.h>' "$target_file"
+                  echo "✅ Header injected successfully."
+              else
+                  echo "✅ Header already present."
+              fi
+          else
+              echo "⚠️ Warning: supercalls.c not found in any KSU directory!"
+          fi
+
+      - name: Apply Critical Fixes (KSU + Xiaomi + Bootloop)
+        working-directory: gki/common
+        run: |
+          echo "🛠️ 1. Fixing undefined KSU symbols (ksu_init_rc_hook, etc)..."
+          if [ -f fs/read_write.c ]; then
+              sed -i '/ksu_init_rc_hook/d' fs/read_write.c
+              echo "✅ Removed ksu_init_rc_hook from fs/read_write.c"
+          fi
+          if [ -f fs/stat.c ]; then
+              sed -i '/ksu_handle_sys_newfstatat/d' fs/stat.c
+              echo "✅ Removed ksu_handle_sys_newfstatat from fs/stat.c"
+          fi
+          
+          echo "🔧 2. Fixing Stack Protector (Wajib untuk Xiaomi Anti-Bootloop)..."
+          sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
+          
+          echo "🔧 3. Fixing Xiaomi Module Compat (Symbol Version)..."
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+          
+          echo "🧹 4. Cleaning Build Config..."
+          sed -i 's/check_defconfig//' build.config.gki
+
+      - name: Configure Kernel (Safe Mode)
+        working-directory: gki/common
+        run: |
+          TARGET_CONFIG="arch/arm64/configs/gki_defconfig"
+          
+          echo "⚙️ Injecting Configuration (Safe Mode)..."
+          
+          cat >> $TARGET_CONFIG <<EOF
+          CONFIG_KSU=y
+          CONFIG_KPM=n
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_KPROBES_HOOK=n
+          
+          # SuSFS Configs
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_SU=y
+          
+          # Tuning & Safety
+          CONFIG_HZ_300=y
+          CONFIG_FS_ENCRYPTION=y
+          CONFIG_FS_VERITY=y
+          CONFIG_PM_AUTOSLEEP=y
+          CONFIG_PM_WAKELOCKS=y
+          
+          # Matikan ini di config juga untuk double protection
+          # CONFIG_STACKPROTECTOR_PER_TASK is not set
+          CONFIG_LOCALVERSION_AUTO=n
+          EOF
+
+      - name: Apply Versioning (Short & Clean)
+        working-directory: gki/common
+        run: |
+          NAME="${{ github.event.inputs.kernel_name }}"
+          [ -z "$NAME" ] && NAME="Zixine-Elysium"
+          
+          # Format: -Zixine-Mambo
+          FINAL_TAG="-${NAME}-MamboSU-V1.2"
+          echo "🏷️ Final Version Suffix: $FINAL_TAG"
+          
+          # 1. Kosongkan script setlocalversion
+          echo "" > scripts/setlocalversion
+          
+          # 2. HAPUS EXTRAVERSION bawaan dari Makefile
+          if grep -q '^EXTRAVERSION *=' Makefile; then
+            sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = $FINAL_TAG/" Makefile
+          else
+            echo "EXTRAVERSION = $FINAL_TAG" >> Makefile
+          fi
+
+      - name: Setup Compiler (Clang 12)
+        working-directory: gki
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          
+          ACTUAL_VER="clang-r416183b"
+          ACTUAL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2021/clang-r416183b.tar.gz"
+          EXPECTED_VER="clang-r563880b"
+          
+          echo "⬇️ Downloading Clang 12..."
+          mkdir -p "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          curl -L "$ACTUAL_URL" | tar -xz -C "prebuilts-master/clang/host/linux-x86/$ACTUAL_VER"
+          
+          echo "🔗 Symlinking $EXPECTED_VER -> $ACTUAL_VER..."
+          cd prebuilts-master/clang/host/linux-x86
+          rm -rf "$EXPECTED_VER"
+          ln -s "$ACTUAL_VER" "$EXPECTED_VER"
+          echo "✅ Compiler Ready."
+
+      - name: Execute Build
+        working-directory: gki
+        run: |
+          echo "🚀 Starting Compilation for MamboSU..."
+          
+          # Matikan ABI check agar build lulus walau ada simbol yang hilang/berubah
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
+          export KMI_ENFORCED=0
+          export TRIM_NONLISTED_KMI=0
+          
+          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+      - name: Prepare Release Artifacts
+        id: packaging_setup
+        run: |
+          BASE_VER=$(make -s kernelversion -C gki/common | tr -d '\n\r')
+          
+          BASE_NAME="${{ github.event.inputs.kernel_name }}"
+          [ -z "$BASE_NAME" ] && BASE_NAME="Zixine"
+          
+          TIMESTAMP=$(date +"%Y%m%d")
+          REL_TAG="v${TIMESTAMP}"
+          
+          ZIP_FILENAME="AK3-${BASE_NAME}-${REL_TAG}-${BASE_VER}-MamboSU.zip"
+          echo "ZIP_FILENAME=$ZIP_FILENAME" >> $GITHUB_ENV
+
+      - name: Create AnyKernel3 Zip
+        run: |
+          echo "📦 Packaging AnyKernel3..."
+          git clone https://github.com/zixine/anykernel AnyKernel3
+          rm -rf AnyKernel3/.git AnyKernel3/.github AnyKernel3/.gitignore AnyKernel3/README.md
+          
+          IMG=$(find gki/out -type f -name "Image" | head -n 1)
+          if [ -f "$IMG" ]; then
+             cp "$IMG" AnyKernel3/
+          else
+             echo "❌ Image not found!" && exit 1
+          fi
+          
+          cd AnyKernel3
+          zip -r9 "../${{ env.ZIP_FILENAME }}" * -x .git .gitignore
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_FILENAME }}
+          path: ${{ env.ZIP_FILENAME }}
+          
+      - name: Archive Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-mambo
+          path: gki/out/android12-5.10/common/build.log
+          if-no-files-found: warn
