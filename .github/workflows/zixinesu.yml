@@ -171,10 +171,6 @@ jobs:
           NAME="${{ github.event.inputs.kernel_name }}"
           [ -z "$NAME" ] && NAME="Zixine-Elysium"
           
-          # Format: -Zixine-Mambo
-          FINAL_TAG="-${NAME}-MamboSU-V1.2"
-          echo "🏷️ Final Version Suffix: $FINAL_TAG"
-          
           # 1. Kosongkan script setlocalversion
           echo "" > scripts/setlocalversion
           
