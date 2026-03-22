@@ -67,16 +67,6 @@ jobs:
       - name: Apply Critical Fixes (KSU + Xiaomi + Bootloop)
         working-directory: gki/common
         run: |
-          echo "🛠️ 1. Fixing undefined KSU symbols (ksu_init_rc_hook, etc)..."
-          if [ -f fs/read_write.c ]; then
-              sed -i '/ksu_init_rc_hook/d' fs/read_write.c
-              echo "✅ Removed ksu_init_rc_hook from fs/read_write.c"
-          fi
-          if [ -f fs/stat.c ]; then
-              sed -i '/ksu_handle_sys_newfstatat/d' fs/stat.c
-              echo "✅ Removed ksu_handle_sys_newfstatat from fs/stat.c"
-          fi
-          
           echo "🔧 2. Fixing Stack Protector (Wajib untuk Xiaomi Anti-Bootloop)..."
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
           
