@@ -177,6 +177,16 @@ jobs:
           
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
+      - name: Patch Image
+        run: |
+          echo "[Additional] Pathcing KPM"
+          cd $GKI_DIR/out/android12-5.10/common/arch/arm64/boot
+          curl -LSs https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/main/kpm/patch_linux -o patch
+          chmod 777 patch
+          ./patch
+          mv -f oImage Image
+          echo "[✓] Patched"
+          
       - name: Prepare Release Artifacts
         id: packaging_setup
         run: |
