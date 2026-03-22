@@ -97,7 +97,7 @@ jobs:
           
           cat >> $TARGET_CONFIG <<EOF
           CONFIG_KSU=y
-          CONFIG_KPM=n
+          CONFIG_KPM=y
           CONFIG_KSU_MANUAL_HOOK=y
           CONFIG_KSU_KPROBES_HOOK=n
           
@@ -181,7 +181,7 @@ jobs:
         run: |
           echo "[Additional] Pathcing KPM"
           cd $GKI_DIR/out/android12-5.10/common/arch/arm64/boot
-          curl -LSs https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/main/kpm/patch_linux -o patch
+          curl -LSs https://raw.githubusercontent.com/Kingfinik98/SukiSU_patch/main/kpm/patch_linux -o patch
           chmod 777 patch
           ./patch
           mv -f oImage Image
