@@ -67,6 +67,12 @@ jobs:
       - name: Apply Critical Fixes (KSU + Xiaomi + Bootloop)
         working-directory: gki/common
         run: |
+          echo "🔧 1. Fixing MamboSU & SuSFS Conflict (Implicit Declaration)..."
+          # Kita tambahkan header berjaga-jaga jika fungsinya ada di versi lain
+          sed -i '1i #include <linux/susfs.h>' drivers/kernelsu/supercalls.c
+          # Kita nonaktifkan baris yang bermasalah agar compiler mengabaikannya dan build tetap lanjut
+          sed -i 's/susfs_set_i_state_on_external_dir/\/\/susfs_set_i_state_on_external_dir/g' drivers/kernelsu/supercalls.c
+
           echo "🔧 2. Fixing Stack Protector (Wajib untuk Xiaomi Anti-Bootloop)..."
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
           
